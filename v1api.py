@@ -1,0 +1,356 @@
+import webcore
+import sqlite3
+import os
+import json
+import uuid
+
+def reqmain(args):
+    op = args['op']
+
+    if args['key'] == 'ems':
+        pread = True
+        pwrite = False
+    if args['key'] == '0767':
+        pread = True
+        pwrite = True
+
+    if pread is False:
+        raise Exception('To access the service you must provide at least a read "key" as a parameter of the transaction.')
+
+    sqlconn = sqlite3.connect('data.db') 
+    c = sqlconn.cursor()
+
+    if op == 'enum_years':
+        grp = args['grp']        
+        c.execute('SELECT DISTINCT strftime("%%Y", date) FROM grp_%s ORDER BY date' % 'driver')
+        out = []
+        for rec in c.fetchall():
+            out.append(int(rec[0]))
+        return out
+    if op == 'enum_months':
+        grp = args['grp']
+        c.execute('SELECT DISTINCT strftime("%%m", date) FROM grp_%s ORDER BY date' % 'driver')
+        out = []
+        for rec in c.fetchall():
+            out.append(int(rec[0]))
+        return out
+    if op == 'dayread':
+        grp = args['grp']
+        year = '%04d' % int(args['year'])
+        month = '%02d' % int(args['month'])
+        day = '%02d' % int(args['day'])
+        #return 'SELECT text FROM grp_%s WHERE date = "%s-%s-%s"' % (grp, year, month, day)
+        c.execute('SELECT text FROM grp_%s WHERE date = julianday("%s-%s-%s") ORDER BY date' % (grp, year, month, day))
+        return c.fetchone()[0]
+    if op == 'readcalendar':
+        grp = args['grp']
+        fyear = '%04d' % int(args['from_year'])
+        fmonth = '%02d' % int(args['from_month'])
+        fday = '%02d' % int(args['from_day'])
+        tyear = '%04d' % int(args['to_year'])
+        tmonth = '%02d' % (int(args['to_month']))
+        tday = '%02d' % int(args['to_day'])
+        c.execute(
+            'SELECT strftime("%%Y", date), strftime("%%m", date), strftime("%%d", date), text FROM grp_driver WHERE date >= julianday("%s-%s-%s") and date < julianday("%s-%s-%s") ORDER BY date' %
+            (fyear, fmonth, fday, tyear, tmonth, tday)
+        )
+        out = []
+        for rec in c.fetchall():
+            out.append((int(rec[0]), int(rec[1]), int(rec[2]), rec[3]))
+        return out
+    if op == 'readcalls':
+        fyear = '%04d' % int(args['from_year'])
+        fmonth = '%02d' % int(args['from_month'])
+        fday = '%02d' % int(args['from_day'])
+        tyear = '%04d' % int(args['to_year'])
+        tmonth = '%02d' % (int(args['to_month']))
+        tday = '%02d' % int(args['to_day'])
+        c.execute('''
+            SELECT id, datetime(datetime, "unixepoch"), crew, disposition FROM ilog
+                WHERE datetime >= strftime("%%s", "%s-%s-%s") AND
+                      datetime < strftime("%%s", "%s-%s-%s")
+        ''' % (fyear, fmonth, fday, tyear, tmonth, tday))
+        out = []
+        for rec in c.fetchall():
+            out.append((rec[0], rec[1], rec[2], rec[3]))
+        return out
+    if op == 'get_personnel_attributes':
+        ids = args['ids'].split(',')
+        out = {}
+        for i in ids:
+            sqlstr = 'SELECT attribute_id FROM personnel_attributes WHERE personnel_id = %s' % i
+            c.execute(sqlstr)
+            out[i] = []
+            for rec in c.fetchall():
+                out[i].append(int(rec[0]))
+        return out
+
+    if op == 'get_personnel_ids':
+        names = args['names'].split(',')
+        out = {}
+        out['mapping'] = {}
+        out['error'] = {}
+        for name in names:
+            name = name.strip()
+            try:
+                out['mapping'][name] = int(get_personnel_id_fromname(name, c))
+            except Exception as e:
+                out['error'][name] = '%s' % e
+        return out
+
+    raise Exception('The operation specified was not supported.')
+
+def conversion():
+    from calendar import monthrange
+
+    sqlconn = sqlite3.connect('data.db')
+    c = sqlconn.cursor()
+
+    c.execute('DROP TABLE grp_driver')
+    c.execute('DROP TABLE grp_medic')
+    c.execute('DROP TABLE chglog')
+
+    c.execute('CREATE TABLE grp_driver (date REAL PRIMARY KEY, text TEXT)')
+    c.execute('CREATE TABLE grp_medic (date REAL PRIMARY KEY, text TEXT)')
+    c.execute('CREATE TABLE chglog (id INTEGER PRIMARY KEY AUTOINCREMENT, time INTEGER, text TEXT)')
+    
+    done = {}
+
+    for node in os.listdir('./'):
+        nparts = node.split('.')
+        if nparts[0] != 'data':
+            continue
+        if len(nparts) > 4:
+            continue
+        if len(nparts) < 4:
+            continue
+        group = nparts[1].lower()
+        year = int(nparts[2])
+        month = int(nparts[3])
+
+        daycnt = monthrange(year, month)[1]
+
+        year = '%04d' % year
+        month = '%02d' % month
+
+        fd = open(node, 'r')
+        lines = fd.readlines()
+        fd.close()
+
+        for ndx in range(0, len(lines)):
+            if ndx == daycnt:
+                break
+            day = '%02d' % (ndx + 1)
+            key = '%s-%s-%s-%s' % (group, year, month, day)
+            if key in done:
+                raise Exception(key)
+            done[key] = True
+            print(node, year, month, day, lines[ndx])
+            c.execute('''
+                INSERT INTO grp_%s (date, text) 
+                    VALUES (julianday("%s-%s-%s"), "%s")
+            ''' % (group, year, month, day, lines[ndx].replace('\x09', '\x06')))
+
+    sqlconn.commit()
+
+'''
+    This takes a name as a string and a database cursor and attempts to
+    match it to the database personnel table. It will throw an excception
+    if the attempt is unsuccessful.
+'''
+def get_personnel_id_fromname(name, cursor):
+    name = name.lower()
+    match = None
+    cursor.execute('SELECT id, firstname, middlename, lastname, surname FROM personnel')
+    for rec in cursor.fetchall():
+        id = rec[0]
+        f = rec[1].lower()
+        m = rec[2].lower()
+        l = rec[3].lower()
+        u = rec[4].lower()
+
+        for x in range(1, 2 ** 4):
+            o = []
+            if x & 1:
+                o.append(f)
+            if x & 2:
+                o.append(m)
+            if x & 4:
+                o.append(l)
+            if x & 8:
+                o.append(u)
+            o = ' '.join(o)
+            if name == o:
+                if match is not None:
+                    raise Exception('ambigious name for "%s"' % name)
+                match = id
+    if match is None:
+        raise Exception('no personnel found for "%s"' % name)
+    return match
+
+
+def tmp():
+    sqlconn = sqlite3.connect('data.db')
+    c = sqlconn.cursor()
+
+    try:
+        c.execute('DROP TABLE ilog')
+    except:
+        pass
+
+    try:
+        c.execute('DROP TABLE personnel')
+    except:
+        pass
+    try:
+        c.execute('DROP TABLE crew')
+    except:
+        pass
+
+    try:
+        c.execute('DROP TABLE crew_function')
+    except:
+        pass
+
+    c.execute('CREATE TABLE crew_function (id INTEGER PRIMARY KEY, description TEXT)')
+    c.execute('CREATE TABLE crew (personnel_id INTEGER, crew_id TEXT, crew_function_id INTEGER)')
+    c.execute('CREATE TABLE ilog (id INTEGER PRIMARY KEY, datetime INTEGER, location TEXT, crew TEXT, disposition INTEGER)')
+    c.execute('CREATE TABLE personnel (id INTEGER PRIMARY KEY, firstname TEXT, middlename TEXT, lastname TEXT, surname TEXT)')
+
+    c.execute('INSERT INTO crew_function (id, description) VALUES (0, "primary paramedic")')
+    c.execute('INSERT INTO crew_function (id, description) VALUES (1, "primary driver")')
+
+    def getcrew(crew, makenew = True):
+        dbg = crew
+        if crew.strip() == '':
+            return '0'
+        print('processing crew %s' % crew)
+        tmp = crew.split(',')
+        bucket = {}
+        crew = {}
+        for m in tmp:
+            if m.strip() == '':
+                continue
+            m = m.split(':')
+            print('@', m)
+            function = m[0]
+            name = m[1]
+            pid = get_personnel_id_fromname(name, c)
+            crew[pid] = int(function)
+            c.execute('SELECT crew_id FROM crew WHERE personnel_id = %s' % pid)
+            tmp = c.fetchall()
+            bucket[pid] = []
+            for rec in tmp:
+                bucket[pid].append(rec[0])
+            print('bucket for %s is %s' % (name, bucket))
+
+        for pid in bucket:
+            crews = bucket[pid]
+            for crew_id in crews:
+                c.execute('SELECT personnel_id, crew_function_id FROM crew WHERE crew_id = "%s"' % crew_id)
+                tmp = c.fetchall()
+                sqlout = []
+                fmap = {}
+                for rec in tmp:
+                    sqlout.append(rec[0])
+                    fmap[rec[0]] = rec[1]
+                reject = False
+                for pid in sqlout:
+                    # if the current crew we are looking at does not contain
+                    # this personnel or this personnel's function is different
+                    # then reject this crew as a match
+                    if pid not in bucket or fmap[pid] != crew[pid]:
+                        reject = True
+                        break
+                if reject is True:
+                    continue
+                for pid in bucket:
+                    # if a crew member in the crew in the db is not in the current
+                    # crew, or the crew member function does not match
+                    if pid not in sqlout or fmap[pid] != crew[pid]:
+                        reject = True
+                        break
+                if reject:
+                    break
+                return crew_id
+        if makenew:
+            crew_uuid = uuid.uuid4().hex
+            v = []
+            for pid in crew:
+                v.append('(%s, "%s", %s)' % (pid, crew_uuid, crew[pid]))
+            # hopefully an atomic operation
+            sqlstr = 'INSERT INTO crew (personnel_id, crew_id, crew_function_id) VALUES %s' % ','.join(v)
+            print(dbg, sqlstr)
+            c.execute(sqlstr)
+            return crew_uuid
+        return None
+    #
+
+
+    def addpersonnel(id, first, middle, last, surname):
+        c.execute('''
+            INSERT INTO personnel (id, firstname, middlename, lastname, surname)
+                VALUES (%s, "%s", "%s", "%s", "%s")
+        ''' % (id, first, middle, last, surname))
+
+    def addone(id, datetime, disposition, crew, location):
+        c.execute('''
+            INSERT INTO ilog (id, datetime, location, crew, disposition)
+                VALUES (%s, strftime('%%s', "%s"), "%s", "%s", %s)
+        ''' % (id, datetime, location, crew, disposition))
+
+    addpersonnel(0, 'andrew', '', 'wood', '')
+    addpersonnel(1, 'jesse', '', '', '')
+    addpersonnel(2, 'leonard', 'kevin', 'mcguire', 'jr')
+    addpersonnel(3, 'david', '', 'ingram', '')
+    addpersonnel(4, 'sonia', '', 'taylor', '')
+    addpersonnel(5, 'john', '', 'estes', '')
+    addpersonnel(6, 'nikki', '', 'barris', '')
+    addpersonnel(7, 'eddie', '', 'bryant', '')
+    addpersonnel(8, 'josh', '', 'dorminey', '')
+    addpersonnel(9, 'ethan', '', 'colley', '')
+    addpersonnel(10, 'heather', '', 'martin', '')
+    addpersonnel(11, 'brittney', '', '', '')
+    addpersonnel(12, 'justin', '', 'hunt', '')
+    addpersonnel(13, 'todd', '', '', '')
+    addpersonnel(14, 'doug', '', '', '')
+
+    addone(1506172, '2015-06-01 18:50', 5, getcrew('1:andrew,0:jesse'), '215 fleahop rd')
+    addone(1506173, '2015-06-02 10:38', 0, getcrew('1:kevin,0:david'), '156 double bridge ferry rd')
+    addone(1506174, '2015-06-03 08:43', 1, getcrew('1:kevin,0:justin'), '647 kowaliga rd')
+    addone(1506175, '2015-06-04 01:36', 5, getcrew('1:john,0:justin'), '156 nichols ave')
+    addone(1506176, '2015-06-06 18:18', 2, getcrew('1:nikki,0:sonia'), '51 main st')
+    addone(1506177, '2015-06-07 03:07', 1, getcrew('1:nikki,0:sonia'), '1060 claud rd lot 16')
+    addone(1506178, '2015-06-08 18:05', 0, getcrew('1:kevin,0:david'), '30 varner st')
+    addone(1506179, '2015-06-09 08:48', 2, getcrew('1:kevin,0:justin'), '1000 claud road')
+    addone(1506180, '2015-06-10 11:16', 5, getcrew('1:kevin,0:sonia'), '215 fleahop rd')
+    addone(1506181, '2015-06-11 10:20', 1, getcrew('1:kevin,0:jesse'), '610 fleahop rd')
+    addone(1506182, '2015-06-11 18:13', 5, getcrew('1:kevin,0:sonia'), '')
+    addone(1506183, '2015-06-13 13:00', 5, getcrew('0:sonia'), 'station #1')
+    addone(1506184, '2015-06-15 13:33', 3, getcrew('1:kevin,0:eddie'), '510 union rd')
+    addone(1506185, '2015-06-15 16:19', 5, getcrew('1:kevin,0:eddie'), '200 fleahop rd')
+    addone(1506186, '2015-06-15 20:35', 4, getcrew('1:john,0:eddie'), '76 oliver rd')
+    addone(1506187, '2015-06-16 16:33', 2, getcrew('1:kevin,0:sonia'), '1060 claud rd lot 15')
+    addone(1506188, '2015-06-18 03:24', 5, getcrew('1:dorminey,0:todd'), '1186 salem rd')
+    addone(1506189, '2015-06-18 11:08', 5, getcrew('1:kevin,0:david'), '1060 claud rd lot')
+    addone(1506190, '2015-06-20 10:00', 5, getcrew('0:sonia'), '145 main st')
+    addone(1506191, '2015-06-20 09:44', 6, getcrew('1:andrew,0:sonia'), '215 fleahop rd')
+    addone(1506192, '2015-06-20 11:57', 6, getcrew('1:andrew,0:sonia'), '644 old avant rd')
+    addone(1506193, '2015-06-20 12:10', 5, getcrew('1:andrew,0:sonia'), '675 n college')
+    addone(1506194, '2015-06-20 21:00', 2, getcrew('1:heather,0:sonia'), '305 1st ave')
+    addone(1506195, '2015-06-20 22:49', 9, getcrew('1:heather,0:sonia'), '1260 mt hebron')
+    addone(1506196, '2015-06-21 11:53', 5, getcrew('1:nikki,0:justin'), 'first baptist church')
+    addone(1506197, '2015-06-23 08:52', 5, getcrew(''), '195 fleahop rd')
+    addone(1506198, '2015-06-24 22:58', 0, getcrew('1:ethan,0:justin'), '1486 neman rd')
+    addone(1506199, '2015-06-25 02:22', 1, getcrew('1:ethan,0:justin'), '1186 old salem rd')
+    addone(1506200, '2015-06-26 07:53', 7, getcrew('1:kevin,0:sonia'), 'w collins @ blount')
+    addone(1506201, '2015-06-26 09:36', 7, getcrew('1:kevin,0:doug'), '312 ridgeway dr')
+    addone(1506202, '2015-06-27 05:56', 7, getcrew('0:doug'), '3705 claud rd')
+    addone(1506203, '2015-06-27 18:44', 3, getcrew('1:brittney,0:sonia') , '13 rosewood apt b2')
+    addone(1506204, '2015-06-28 15:31', 8, getcrew('1:andrew,0:jesse'), '4249 claud rd')
+    sqlconn.commit()
+
+#tmp()
+#conversion()
+
+webcore.start(reqmain)

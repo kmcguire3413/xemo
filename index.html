@@ -1,0 +1,924 @@
+<html>
+    <head>
+        <script type="text/javascript" src="jquery-2.1.4.js"></script>
+    </head>
+    <body>
+        <script language="javascript">
+            String.prototype.format = function () {
+                var args = arguments;
+                return this.replace(/\{\{|\}\}|\{(\d+)\}/g, function (m, n) {
+                    if (m == "{{") { return "{"; }
+                    if (m == "}}") { return "}"; }
+                    return args[n];
+                });
+            };
+
+            function populate_i_year() {
+                $.get('v1api.py?key=0767&grp=driver&op=enum_years', function (data) {
+                    var data = $.parseJSON(data);
+                    var result = data['result'];
+                    $('#i_year').empty();
+                    for (var i in result) {
+                        $('#i_year').append('<option value="{0}">{1}</option'.format(
+                            result[i], result[i]
+                        ));
+                    }
+                    var lastyear = result[result.length - 1] + 1;
+                    $('#i_year').append('<option value="{0}">{1}</option'.format(lastyear, lastyear));
+                });
+            }
+
+            function update_calender() {
+                var year = parseInt(i_year.value);
+                var month = parseInt(i_month.value);
+                var group = parseInt(i_group.value);
+                //render_calender(year, month, group);
+
+                var config = {}
+                config.incpayper12hrshift = 25.0;
+                config.incpayperhour = 2.0;
+                config.transportpay = 25.0;
+                config.numtransportswaived = 1;
+                config.fulltimehours = 40.0;
+                config.parttimehours = 20.0;
+                config.systems = {
+                    // This personnel has this sequence of systems applied.
+                    2:  [
+                            plugin_pay_hourlycapped,
+                            plugin_pay_incentive,
+                    ],
+                    // For everyone else this sequence of system are applied.
+                    '$': [
+                            plugin_pay_incentive,
+                    ]
+                };
+
+                plugin_pay_bootstrap(
+                    '0767', year, month, 1, year, month + 1, 1, group,
+                    config,
+                    function () {
+                        alert('done');
+                    }
+                );
+            }
+
+            function decyearmonth(year, month) {
+                if (month - 1 == 0) {
+                    --year;
+                    month = 12;
+                    return { year: year, month: month };
+                }
+
+                return { 'year': year, 'month': month - 1 };
+            }
+
+            function plugin_incentivepay_init() {
+
+            }
+
+            function isDispositionATransport(dis) {
+                // 5: no transport
+                // 6: cancelled
+                // 7: fd call
+                // 9: no pt found                
+                if (dis == 5 || dis == 6 || dis == 7 || dis == 9) {
+                    return false;
+                }
+                return true;
+            }            
+
+            function permutate(array, callback) {
+                // Do the actual permuation work on array[], starting at index
+                function p(array, index, callback) {
+                    // Swap elements i1 and i2 in array a[]
+                    function swap(a, i1, i2) {
+                        var t = a[i1];
+                        a[i1] = a[i2];
+                        a[i2] = t;
+                    }
+
+                    if (index == array.length - 1) {
+                        callback(array);
+                        return 1;
+                    } else {
+                        var count = p(array, index + 1, callback);
+                        for (var i = index + 1; i < array.length; i++) {
+                            swap(array, i, index);
+                            count += p(array, index + 1, callback);
+                            swap(array, i, index);
+                        }
+                        return count;
+                    }
+                }
+
+                if (!array || array.length == 0) {
+                    return 0;
+                }
+
+                return p(array, 0, callback);
+            }
+
+            function qgsd(o, p, d) {
+                if (!(p in o)) {
+                    o[p] = d;
+                    return d;
+                }
+                return o[p];
+            }
+
+            function plugin_pay_calculation(pidattrib, calls, shifts, key, from, to, cfg, cb) {
+                var allpay = {};
+                var master = {};
+
+                // pay period.. 7/9/2015 - 7/23/2015
+
+                // First, we need to determine what pay period we are currently in.
+                var pp_start = new Date(2015, 7 - 1, 9, 6);
+                var pp_end = new Date(2015, 7 - 1, 23, 6);
+                
+                // advance the month up one, since our caller had dropped it back
+                // to grab data for any pay period that extended before the specified
+                // date
+                var firstdayofrange = new Date(from.year, from.month, from.day);
+                var lastdayofrange = new Date(to.year, to.month - 1, to.day);
+
+                $('#dbgarea').append('{0}-{1}-{2}'.format(to.year, to.month, to.day));
+                $('#dbgarea').append('doing {0} to {1}<br/>'.format(firstdayofrange, lastdayofrange));
+                $('#dbgarea').append('shifts.length:' + shifts.length + '<br/>');
+
+                var incentive_calculation_lock_for_payperiod = null;
+                {
+                    var __pp_start = new Date(pp_start);
+                    var __pp_end = new Date(pp_end);
+                    if (lastdayofrange < pp_start) {
+                        for (; lastdayofrange < __pp_start; __pp_start.setDate(__pp_start.getDate() - 14), __pp_end.setDate(__pp_end.getDate() - 14));
+                    } else {
+                        for (; lastdayofrange > __pp_start; __pp_start.setDate(__pp_start.getDate() + 14), __pp_end.setDate(__pp_end.getDate() + 14));
+                    }
+                    // lock incentive calculations for personnel, who are involved in pay system
+                    // that is performed before incentive, to not have incentive calculated beyond
+                    // this specific date.
+                    incentive_calculation_lock_for_payperiod = __pp_start;
+                    $('#dbgarea').append('incentive calculation lock for pay period dependancy set at ' + __pp_start + '<br/>');
+
+                }
+
+                if (firstdayofrange < pp_start) {
+                    for (; firstdayofrange < pp_start; pp_start.setDate(pp_start.getDate() - 14), pp_end.setDate(pp_end.getDate() - 14));
+                } else {
+                    for (; firstdayofrange > pp_start; pp_start.setDate(pp_start.getDate() + 14), pp_end.setDate(pp_end.getDate() + 14));
+                }
+
+                var incentive_calulation_lock_for_payperiod_who = [];                
+
+                // We now have `pp_start` and `pp_end` over the first day of this month. We need
+                // to now enumerate our full time and part time drivers. Then we will decide what
+                // shifts for them to exclude from the incentive calculations.
+                for (var pid in pidattrib) {
+                    pid = parseInt(pid);
+                    var attribs = pidattrib[pid];
+                    var cap = null;
+                    for (var x = 0; x < attribs.length; ++x) {
+                        if (attribs[x] == 3) {
+                            cap = cfg.fulltimehours;
+                            break;
+                        }
+                        if (attribs[x] == 4) {
+                            cap = cfg.parttimehours;
+                            break;
+                        }
+                    }
+
+                    if (cap != null) {
+                        $('#dbgarea').append('hourly capacity of ' + cap + ' set for pid of ' + pid + '<br/>');
+                        incentive_calulation_lock_for_payperiod_who.push(pid);
+
+                        // We have a employee whose time we need to exclude
+                        // from the incentive calculations. So, now we determine
+                        // the times to exclude.
+
+                        // Go through each pay period to build exclusion and calculate
+                        // the normal pay.
+                        var cur_pp_start = new Date(pp_start);
+                        var cur_pp_end = pp_end;
+                        for (; cur_pp_start < lastdayofrange; cur_pp_start.setDate(cur_pp_start.getDate() + 14), cur_pp_end.setDate(cur_pp_end.getDate() + 14)) {
+                            $('#dbgarea').append('doing payperiod {0} to {1}<br/>'.format(cur_pp_start, cur_pp_end));
+                            // The best reasonable hours allocator.
+                            function __b(totalhours, pps, ppe) {
+                                $('#dbgarea').append('doing best reasonable hours allocate for {0} to {1}<br/>'.format(pps, ppe));
+                                var dayhours = [0, 0, 0, 0, 0, 0, 0];
+                                var dayshifts = [[], [], [], [], [], [], []];
+                                for (var i = 0; i < shifts.length; ++i) {
+                                    if (
+                                            (shifts[i].start < pps && shifts[i].end <= pps) ||
+                                            (shifts[i].start >= ppe && shifts[i].end > ppe)
+                                        ) {                                        
+                                        // Skip this because it is outside of the current pay period.
+                                        continue;
+                                    }
+
+                                    if (shifts[i].pid != pid) {
+                                        continue;
+                                    }
+
+                                    var dayndx = Math.floor((shifts[i].start - pps) / 1000.0 / 3600.0 / 24.0);
+                                    $('#dbgarea').append('dayndx:' + dayndx + ' start:' + shifts[i].start + ' pp_start:' + cur_pp_start + '<br/>');
+                                    dayhours[dayndx] += (shifts[i].end - shifts[i].start) / 1000.0 / 3600.0;
+                                    // Keep this around so we can remove it from shifts if needed later.
+                                    shifts[i].__ndx = i;
+                                    // Link it into the appropriate day in order.
+
+                                    dayshifts[dayndx].push(shifts[i]);
+                                }
+
+                                // Determine if all hours will be consumed to feed the cap?
+                                var tmp = 0;
+                                for (var i = 0; i < dayhours.length; ++i) {
+                                    tmp += dayhours[i];
+                                }
+
+                                if (tmp + totalhours <= cap) {
+                                    // There is no need to continue. We must consider all remaining shifts
+                                    // as employee hours and not incentive hours.
+                                    for (var i = 0; i < dayshifts.length; ++i) {
+                                        for (var x = 0; x < dayshifts[i].length; ++x) {
+                                            // Remove it from ever being computed for incentive time.
+                                            $('#dbgarea').append('only ' + (tmp + totalhours) + ' in 1/2 pay period.. no need for premutation algo.. took all remaining hours and shifts..<br/>');
+                                            shifts.splice(dayshifts[i][x].__ndx, 1);
+                                        }
+                                    }
+                                    return tmp + totalhours;
+                                }
+
+                                var tmp = 0;
+                                var fiddle = 8;
+                                while (totalhours + tmp < cap) {
+                                    for (var x = 0; x < dayhours.length; ++x) {
+                                        if (dayhours[x] >= fiddle) {
+                                            tmp += fiddle;
+                                        } else {
+                                            tmp += dayhours[x];
+                                        }
+                                    }
+
+                                    if (totalhours + tmp >= cap) {
+                                        break;
+                                    }
+
+                                    ++fiddle;
+                                }
+
+                                $('#dbgarea').append('fiddle set to ' + fiddle + '<br/>');
+
+                                var bestmap = null;
+                                var bestcount = -1;
+
+                                function work_premutate_map(p, pretend) {
+                                    var transportcount = 0;
+                                    for (var x = 0; x < p.length; ++x) {
+                                        var ndx = p[x];
+                                        // Try to take 8 hours minimum and maximum.
+                                        for (var y = 0; y < dayshifts[ndx].length; ++y) {
+                                            var shift = dayshifts[ndx][y];
+                                            var totalshifthours = (shift.end - shift.start) / 1000.0 / 3600.0;
+                                            var need = cap - totalhours;
+                                            // The fiddle will cap the maximum hours to grab.
+                                            if (need > fiddle) {
+                                                need = fiddle;
+                                            }
+                                            if (totalshifthours > need) {
+                                                // We are going to subtract these hours out and leave the shift
+                                                // entry.
+                                                if (!pretend) {
+                                                    $('#dbgarea').append('B. took {0} hours from {1} to {2}<br/>'.format(need, shift.start, shift.end));
+                                                    shift.start.setHours(shift.start.getHours() + need);
+                                                    totalhours += need;
+                                                }
+                                                
+                                                // What would we have made in incentive? Find all calls
+                                                // inside the remaining shift.
+                                                var nstart = new Date(shift.start);
+                                                nstart.setHours(nstart.getHours() + need);
+
+                                                for (var z = 0; z < calls.length; ++z) {
+                                                    var calldate = calls[z][1];
+                                                    var calldis = calls[z][3];
+                                                    if (isDispositionATransport(calldis)) {
+                                                        if (calldate >= nstart && calldate < shift.end) {
+                                                            ++transportcount;
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                // We are going to just remove the entire shift.
+                                                if (!pretend) {
+                                                    $('#dbgarea').append('B. took all hours from {0} to {1}<br/>'.format(shift.start, shift.end));
+                                                    shifts.splice(shift.__ndx, 1);
+                                                    totalhours += totalshifthours;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    return transportcount;
+                                }
+
+
+                                var map = [0, 1, 2, 3, 4, 5, 6];
+                                permutate(map, function(p) {
+                                    // Work the premutate map, but just pretend to actually do it.
+                                    var transportcount = work_premutate_map(p, true);
+                                    //$('#dbgarea').append('work_premutate_map got transportcount of ' + transportcount + '<br/>');
+                                    // Track the best transport count.
+                                    if (transportcount > bestcount) {
+                                        bestcount = transportcount;
+                                        bestmap = p.slice();
+                                    }
+                                });
+
+                                // Actually do the premutate map.
+                                $('#dbgarea').append('working best map with transportcount of ' + bestcount + ' for totalhours of ' + totalhours + '<br/>');
+                                work_premutate_map(bestmap, false);
+                                
+                                return totalhours;                             
+                            }
+
+
+                            // The standard hours allocator.
+                            function __a(totalhours, pps, ppe) {
+                                // See if we can exclude any of the normal days of 6p to 2p.
+                                for (var i = 0; i < shifts.length; ++i) {
+                                    if (
+                                            (shifts[i].start < pps && shifts[i].end <= pps) ||
+                                            (shifts[i].start >= ppe && shifts[i].end > ppe)
+                                        ) {
+                                        // Skip this because it is outside of the current pay period.
+                                        continue;
+                                    }
+
+                                    if (shifts[i].pid != pid) {
+                                        continue;
+                                    }
+
+                                    $('#dbgarea').append('A. for pid {0} index:{1} looking at shift {2} ... {3} to {4}<br/>'.format(pid, i, shifts[i].name, shifts[i].start, shifts[i].end));
+
+                                    // Does this shift reside on 6p to 2p on a weekday?
+                                    if (
+                                        (shifts[i].start.getHours() >= 6 && shifts[i].start.getHours() < 14) &&
+                                        (shifts[i].start.getDay() >= 1 && shifts[i].start.getDay() <= 5)
+                                    ) {
+                                        // Yes. Yank out what we need to pull out.
+                                        var totalshifthours = (shifts[i].end - shifts[i].start) / 1000.0 / 3600.0;
+                                        var need = cap - totalhours;
+                                        // Lock the need to 8 hours.
+                                        if (need > 8) {
+                                            need = 8;
+                                        }
+                                        if (totalshifthours > need) {
+                                            // We are going to subtract these hours out and leave the shift
+                                            // entry.
+                                            shifts[i].start.setHours(shifts[i].start.getHours() + need);
+                                            totalhours += need;
+                                            $('#dbgarea').append('removed {0} hours from shift {1} to {2}<br/>'.format(need, shifts[i].start, shifts[i].end));
+                                        } else {
+                                            totalhours += totalshifthours;
+                                            $('#dbgarea').append('removed entire shift {0} to {1}<br/>'.format(shifts[i].start, shifts[i].end));
+                                            // We are going to just remove the entire shift.
+                                            shifts.splice(i, 1);
+                                            // We have to decrement to keep from skipping the next one.
+                                            --i;
+                                        }
+                                    }
+
+                                    if (totalhours >= cap) {
+                                        // No more exclusion for this pay period. We have reached the
+                                        // maximum payable hours.
+                                        break;
+                                    }
+                                }
+
+                                return totalhours;
+                            }
+
+                            // Each pay period is two weeks. So we need to do this computation
+                            // twice for each week.
+                            var tmp = new Date(cur_pp_start);
+                            tmp.setDate(tmp.getDate() + 7);
+                            var totalhours = __a(0.0, cur_pp_start, tmp);
+                            $('#dbgarea').append('A.1: total hours was {0} of {1}<br/>'.format(totalhours, cap));
+                            if (totalhours < cap) {
+                                totalhours = __b(totalhours, cur_pp_start, tmp);
+                                $('#dbgarea').append('B.1: total hours was {0} of {1}<br/>'.format(totalhours, cap));
+                            }
+
+
+                            var tmp = new Date(cur_pp_start);
+                            tmp.setDate(tmp.getDate() + 7);
+                            var totalhours = __a(0.0, tmp, cur_pp_end);
+                            $('#dbgarea').append('A.2 total hours of was {0} of {1}<br/>'.format(totalhours, cap));
+                            if (totalhours < cap) {
+                                totalhours = __b(totalhours, tmp, cur_pp_end);
+                                $('#dbgarea').append('B.2: total hours was {0} of {1}<br/>'.format(totalhours, cap));
+                            }
+
+                            $('#dbgarea').append('doing next iteration<br/>');
+                        }
+                    }
+                }
+
+                $('#dbgarea').append('doing capitalism incentive pay calculation ' + shifts.length + '<br/>');
+                for (var i = 0; i < shifts.length; ++i) {
+                    var rec = shifts[i];
+                    var name = rec.name;
+                    var start = rec.start;
+                    var end = rec.end;
+                    var pid = rec.pid;
+
+                    if (
+                            (rec.start < firstdayofrange && rec.end <= firstdayofrange) ||
+                            (rec.start >= lastdayofrange && rec.end > lastdayofrange)
+                        ) {                                        
+                        // Skip this because it is outside of the current pay period.
+                        continue;
+                    }   
+
+                    if (pid != null && ($.inArray(pid, incentive_calulation_lock_for_payperiod_who) > -1)) {
+                        if (end > incentive_calculation_lock_for_payperiod) {
+                            // (1) This extends into a pay period that the range
+                            //     specified does not cover, or the range included
+                            //     incomplete data for the schedule.
+                            // (2) This personnel was locked due to a dependancy
+                            //     of a pay system to complete its operation in
+                            //     this pay period.
+                            // (3) The pay period could not be calculated because
+                            //     the range did not include it.
+                            // Therefore this personnel will not have incentive
+                            // calculated inside this pay period. So we will limit
+                            // the calculation up to the exact time of this pay period.
+                            $('#dbgarea').append('name:{0} pid:{1} shift incurred incentive calculation lock for payperiod reasons of {2} to {3} to {4}<br/>'.format(
+                                name, pid, start, end, incentive_calculation_lock_for_payperiod
+                            ));
+                            end = incentive_calculation_lock_for_payperiod;
+                        }
+                    }
+
+
+                    // Find all calls that happen on this shift,
+                    var payid;
+                    var curpay;
+                    if (pid != null) {
+                        payid = pid;
+                    } else {
+                        payid = name;
+                    }
+                    if (payid in allpay) {
+                        curpay = allpay[payid];
+                    } else {
+                        curpay = {}
+                        curpay.pid = pid;
+                        curpay.name = name;
+                        curpay.incentivedollars = 0.0;
+                        curpay.totalhours = 0.0;
+                        curpay.hr12shiftscount = 0;
+                        allpay[payid] = curpay;
+                    }
+
+                    var dbg = curpay.incentivedollars;
+
+                    // How many twelve hour shifts do we have in this shift?
+                    var hours = (end - start) / 1000.0 / 60.0 / 60.0;
+                    curpay.totalhours = hours;
+                    var hr12shifts = Math.floor(hours / 12.0);
+                    var lefthours = hours - hr12shifts * 12.0;
+                    curpay.hr12shiftscount += hr12shifts;
+                    curpay.incentivedollars += cfg.incpayper12hrshift * hr12shifts;
+                    curpay.incentivedollars += cfg.incpayperhour * lefthours;
+
+                    var numcalls = 0;
+                    var numtransports = 0;
+                    for (var x = 0; x < calls.length; ++x) {
+                        var id = calls[x][0];
+                        var dt = calls[x][1];
+                        var crewid = calls[x][2];
+                        var dis = calls[x][3];
+                        dt = new Date(dt);
+                        if (dt >= start && dt < end) {
+                            ++numcalls;
+                            if (isDispositionATransport(dis)) {
+                                ++numtransports;
+                            }
+                        } 
+                    }
+
+                    numtransports = numtransports - cfg.numtransportswaived;
+                    if (numtransports > 0) {
+                        curpay.incentivedollars += cfg.transportpay;
+                    }
+
+                    if (curpay.name == 'kevin') {
+                    $('#dbgarea').append('name:{0} id:{1} beginpay:{2} endpay:{3} paydiff:{4} hr12shifts:{5} hours:{6} numcalls:{7} numtransports:{8} start:{9} end:{10}<br/>'.format
+                    (
+                        curpay.name, curpay.pid, dbg, curpay.incentivedollars, curpay.incentivedollars - dbg, hr12shifts, hours,
+                        numcalls, numtransports, start, end
+                    ));
+                    }
+                }
+
+                cb();
+            }
+
+            function plugin_attributes_fetch(key, ids, cb) {
+                for (var x = 0; x < ids.length; ++x) {
+                    ids[x] = String(ids[x]);
+                }
+                $.get('v1api.py?key={0}&op=get_personnel_attributes&ids={1}'.format
+                    (key, ids.join(',')), function (data) {
+                    alert('dbg:' + data);
+                    var mapping = $.parseJSON(data)['result'];
+                    cb(mapping);
+                });                
+            }
+
+
+            function plugin_pay_bootstrap(key, from_year, from_month, from_day, to_year, to_month, to_day, group, config, cb) {
+                // Go back a month to help grab whole pay period incase we start in the middle of one. This
+                // may produce a negative number, but the code below will correct/normalize it.
+                --from_month;
+
+                // Correct dates so that SQL can handle them correctly. The javascript Date object can handle
+                // negative values and values exceeding the set months in a year or days in a month properly,
+                // but our SQL backend may not (and does not currently).
+
+                $('#dbgarea').append('RNG-RAW-INPUT ' + to_year + '-' + to_month + '-' + to_day + '<br/>');
+
+                var tmp = new Date(from_year, from_month - 1, from_day);
+                from_year = tmp.getFullYear();
+                from_month = tmp.getMonth() + 1;
+                from_day = tmp.getDate();
+                var tmp = new Date(to_year, to_month - 1, to_day);
+                to_year = tmp.getFullYear();
+                to_month = tmp.getMonth() + 1;
+                to_day = tmp.getDate();
+
+                plugin_schedule_fetchmonth(key, from_year, from_month, from_day, to_year, to_month, to_day, group, 
+                    function (shifts) {
+                        //alert('got month');
+                        plugin_calls_fetch(key, from_year, from_month, from_day, to_year, to_month, to_day,
+                            function(calls) {
+                                //alert('got calls ' + calls.length + ' with shift count of ' + shifts.length);
+                                shifts = plugin_schedule_enumpersonnelids(key, shifts, 
+                                    function (shifts) {
+                                        //alert('enumed ids');
+                                        var tmp = {}
+                                        for (var x = 0; x < shifts.length; ++x) {
+                                            if (shifts[x].pid == null) {
+                                                continue;
+                                            }
+                                            if (!(shifts[x].pid in tmp)) {
+                                                tmp[shifts[x].pid] = true;
+                                            }
+                                        }
+                                        var pids = [];
+                                        for (var pid in tmp) {
+                                            pids.push(pid);
+                                        }
+
+                                        plugin_attributes_fetch(key, pids, function(pidattrib) {
+                                            //alert('got attributes for PIDs');
+                                            //shifts = plugin_schedule_combineadjshifts(key, shifts);
+                                            algo(
+                                                pidattrib, calls, shifts, key, 
+                                                {
+                                                    year: from_year,
+                                                    month: from_month,
+                                                    day: from_day
+                                                },
+                                                {
+                                                    year: to_year,
+                                                    month: to_month,
+                                                    day: to_day
+                                                },
+                                                config, cb
+                                            );
+                                        });
+                                });
+                        });
+                    }
+                );
+            }
+
+            function plugin_schedule_init() {
+
+            }
+
+            function plugin_schedule_combineadjshifts(key, shifts) {
+                var combine = false;
+                alert('combining adj shifts ' + shifts.length);
+                for (var ndx = 1; ndx < shifts.length; ++ndx) {
+                    if (shifts[ndx].pid != null && shifts[ndx-1].pid != null) {
+                        if (shifts[ndx].pid == shifts[ndx-1].pid) {
+                            combine = true;
+                        } else {
+                            combine = false;
+                        }
+                    } else {
+                        if (shifts[ndx].name == shifts[ndx-1].name) {
+                            combine = true;
+                        } else {
+                            combine = false;
+                        }
+                    }
+                    if (combine) {
+                        // Make sure they stop and start at the same place.
+                        if (shifts[ndx-1].end == shifts[ndx].start) {
+                            // Combine the shifts.
+                            shifts[ndx].start = shifts[ndx-1].start;
+                            // Remove one of the shifts and compensate for
+                            // the increment of `ndx` on iteration.
+                            shifts = shifts.splice(ndx - 1, 1);
+                            --ndx;
+                        } else {
+                            // The shifts were not adjacent in time. There
+                            // was likely some blank time between them if
+                            // even only a few fractions of a second.
+                        }
+                    }
+                }
+                return shifts;
+            }
+
+            function plugin_schedule_enumpersonnelids(key, shifts, cb) {
+                // Build a list of all names so that we can convert them into
+                // into personnel IDs. This will make matching names much more
+                // consistent.
+                var names = [];
+                var crap = {};
+                for (var ndx = 0; ndx < shifts.length; ++ndx) {
+                    if (!(shifts[ndx].name in crap)) {
+                        // Only add the name once to decrease server load and
+                        // increase client load, since I am sure that the client
+                        // can better handle the load overall.
+                        names.push(shifts[ndx].name);
+                        // Yeah.. could not get the IN to work for an array and
+                        // jQuery complained $.indexOf did not exist, and I read
+                        // that some browers may not support array.indexOf.
+                        crap[shifts[ndx].name] = true;
+                    }
+                }
+
+                $.get('v1api.py?key={0}&op=get_personnel_ids&names={1}'.format
+                    (key, names.join(',')), function (data) {
+                    var nametoid = $.parseJSON(data)['result']['mapping'];
+                    for (var ndx = 0; ndx < shifts.length; ++ndx) {
+                        if (shifts[ndx].name in nametoid) {
+                            shifts[ndx].pid = nametoid[shifts[ndx].name];
+                        } else {
+                            shifts[ndx].pid = null;
+                        }
+                    }
+                    cb(shifts);
+                });
+            }
+
+            function plugin_calls_fetch(key, from_year, from_month, from_day, to_year, to_month, to_day, cb) {
+                $.get('v1api.py?key={0}&from_year={1}&from_month={2}&from_day={3}&to_year={4}&to_month={5}&to_day={6}&op=readcalls'.format(
+                    key, from_year, from_month, from_day, to_year, to_month, to_day), function (data) {
+                    var data = $.parseJSON(data);
+                    cb(data['result']);
+                });
+            }
+
+            function render_calender(year, month, group) {
+                $.get('v1api.py?key={0}&grp={1}&year={2}&month={3}&op=readmonth'.format(
+                    i_key.value, group, year, month 
+                ), function (data) {
+                    var data = $.parseJSON(data);
+                    var result = data['result'];
+
+                    for (var i = 0; i < result.length; ++i) {
+                        var day = result[i][0];
+                        var txt = result[i][1];
+                    }
+                });
+            }
+
+            /*
+                This will fetch the entire month specified for the group. The data
+                for each day of the month will be processed for schedule records
+                which will produce a single array containing each record.
+
+                A record is a single line that looks like this:
+                <name> <name> (<name>) <start_time>-<end_time>
+
+                The name parts are concencated together, and the start and end
+                times are interpreted using 12-hour or 24-hour time formats.
+
+                The callback function takes the following arguments:
+                    (key, year, month, group data)
+
+                The `data` argument contains an array and each entry in the array is:
+                    [day_number, name, [start_time, end_time]]
+
+                The start and end time are represented as whole numbers for the
+                hours and as fractional parts for the minutes. Therefore the
+                following is true:
+                    1815 == 6:15PM == 18.25
+                    1345 == 1:45PM == 13.75
+                    0200 == 2:00AM == 2.0
+            */
+            function plugin_schedule_fetchmonth(key, from_year, from_month, from_day, to_year, to_month, to_day, group, cb) {
+                $.get('v1api.py?key={0}&grp={1}&from_year={2}&from_month={3}&from_day={4}&to_year={5}&to_month={6}&to_day={7}&op=readcalendar'.format(
+                    key, group, from_year, from_month, from_day, to_year, to_month, to_day
+                ), function (data) {
+                    var data = $.parseJSON(data);
+                    var result = data['result'];
+                    var out = [];
+
+                    for (var i = 0; i < result.length; ++i) {
+                        // Read the record fields.
+                        var year = result[i][0];
+                        var month = result[i][1];
+                        var day = result[i][2];
+                        var txt = result[i][3];
+
+                        var lines = txt.split('\x06');
+                        for (var ndx in lines) {
+                            var line = lines[ndx].trim();
+                            if (line.length < 1) {
+                                continue;
+                            }
+                            while (line.indexOf('  ') > -1) {
+                                line = line.replace('  ', ' ');
+                            }
+                            while (line.indexOf('__') > -1) {
+                                line = line.replace('__', '_');
+                            }
+                            var parts = line.split(" ");
+                            // substring(0 indexed inclusive, exclusive)
+                            // $.isNumeric(..)
+
+                            function parsetimerange(range) {
+                                function parsetimepair(pair) {
+                                    function _parsetimepair(pair) {
+                                        var min = parseInt(pair.substring(pair.length - 2));
+                                        var hr = parseInt(pair.substring(0, pair.length - 2));
+                                        return hr + (min / 60.0);
+                                    }
+                                    if (!$.isNumeric(pair.substring(pair.length - 1))) {
+                                        var t = _parsetimepair(pair.substring(0, pair.length - 1));
+                                        var sh12 = pair.substring(pair.length - 1);
+                                        sh12 = sh12.toLowerCase();
+                                        if (sh12 == 'p') {
+                                            return t + 12;
+                                        }
+                                        return t;
+                                    } else {
+                                        return _parsetimepair(pair);
+                                    }
+
+                                }
+
+                                var pair = range.split('-');
+                                return [parsetimepair(pair[0]), parsetimepair(pair[1])];
+                            }
+
+                            var rng = null;
+                            var x = 0;
+                            for (; x < parts.length; ++x) {
+                                if ($.isNumeric(parts[x].substring(0, 1))) {
+                                    // This should be the time range.
+                                    rng = parsetimerange(parts[x]);
+                                    break;
+                                }
+                            }
+
+                            //alert(line + ':' + rng[0] + ':' + rng[1]);
+                            if (rng != null) {
+                                var name = parts.slice(0, x).join(' ').trim('.');
+                                var shift = {};
+                                shift.name = name.toLowerCase();
+                                shift.year = year;
+                                shift.month = month;
+                                shift.day = day;
+                                shift.start = rng[0];
+                                shift.end = rng[1];
+                                out.push(shift);
+                            }
+                        }
+                    }
+
+                    // This performs two functions:
+                    //      (1) it converts the start and end time into a complete date and time
+                    //      (2) it handles cases wheres shifts reach into the next day
+                    var triggered = false;
+                    var triggered_mark = 0;
+                    var sday_adv_signal = false;
+                    var eday = null;
+                    var sday = null;
+
+
+                    var lend = null;
+                    var mock_shift = false;
+
+                    for (var i = 0; i < out.length; ++i) {
+                        mock_shift = false;
+
+                        if (lend != null && lend != out[i].start) {
+                            mock_shift = true;
+                            lend = out[i].start;
+                            --i;
+                        } else {
+                            lend = out[i].end;
+                        }
+
+
+                        if (triggered_mark != out[i].day) {
+                            // The advancement is reset if it does not match the day.
+                            eday = out[i].day;
+                            sday = out[i].day;
+                            sday_adv_signal = false;
+                        }
+
+                        if (sday_adv_signal) {
+                            sday = out[i].day + 1;
+                        }
+
+                        // Spans into the next day.
+                        if (out[i].end < out[i].start) {
+                            // Lock the advancement to this day.
+                            triggered_mark = out[i].day;
+                            // Signal for the start day to be advanced next iteration.
+                            sday_adv_signal = true;
+                            // Advance end day.
+                            eday = out[i].day + 1;
+                        }
+
+                        // Starts on the next day.
+                        if (out[i].start == 0.0) {
+                            triggered_mark = out[i].day;
+                            // Advance start and end day.
+                            sday = out[i].day;
+                            eday = out[i].day;
+                        }
+
+                        // Ends on the next day.
+                        if (out[i].end == 0.0) {
+                            triggered_mark = out[i].day;
+                            // Signal for the start day to be advanced next iteration.
+                            sday_adv_signal = true;
+                            // Advance end day.
+                            eday = out[i].day + 1;
+                        }
+
+                        // A mock shift is artificially simulated to fill in the gap
+                        // between two shifts where one exists and was not specified.
+                        //
+                        // This block will not execute for a mock shift. Also, the index
+                        // is actually behind by one. So if we did execute this we would
+                        // create a second copy of the last shift (not this presumed shift).
+                        if (!mock_shift) {
+                            // Note:
+                            //  If the eday or sday exceeds the actual days for a month the 
+                            //  Date object will roll over into the next month giving the
+                            //  correct date.
+                            out[i].start = new Date(out[i].year, out[i].month - 1, sday, out[i].start);
+                            out[i].end = new Date(out[i].year, out[i].month - 1, eday, out[i].end);
+                            //$('#dbgarea').append('i:{0} name:{1} year:{2} month:{3} day:{4} start:{5} end:{6}<br/>'.format(
+                            //    i, out[i].name, out[i].year, out[i].month, out[i].day, out[i].start, out[i].end
+                            //));                            
+                        }
+                    }
+                    cb(out);
+                });
+            }
+
+            month_num_to_name = [
+                'Error',
+                'January', 'Feburary', 'March', 'April', 'May', 'June',
+                'July', 'August', 'September', 'October', 'November',
+                'December'
+            ];
+        </script>
+        <div style="position: absolute;" id="ui">
+            Password: <input type="input" value="0767" id="i_key"></input>
+            Year: <select id="i_year" onchange="update_calender()"></select>
+            Month: <select id="i_month" onchange="update_calender()"></select>
+            Group: <select id='i_group' onchange="update_calender()">
+                <option value="driver">Driver</option>
+                <option value="medic">Medic</option>
+            </select>
+            <!-- 7x5 !-->
+            <span id="calarea"></span>
+            <div style="font-family: monospace; font-size: 8pt;" id="dbgarea"></div>
+        </div>
+        <div style="visibility: hidden; text-align: center; position: absolute; width: 100%; height: 100%; background-color: rgba(190, 190, 190, 0.5)" id="waitscreen">
+        </div>
+        <script language="javascript">
+            populate_i_year();
+            $('#i_month').append('<option value="6">TEST JUNE</option>');
+            for (var i = 0; i < 12; ++i) {
+                $('#i_month').append('<option value="{0}">{1}</option'.format(i + 1, month_num_to_name[i + 1]));
+            }
+        </script>
+    </body>
+</html>
