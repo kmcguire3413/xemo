@@ -3,23 +3,51 @@ import sqlite3
 import os
 import json
 import uuid
+import datetime
+import time
+import dateutil.parser
+import pytz
+import hashlib
 
 def reqmain(args):
     op = args['op']
 
-    if args['key'] == 'ems':
-        pread = True
-        pwrite = False
-    if args['key'] == '0767':
-        pread = True
-        pwrite = True
-
-    if pread is False:
-        raise Exception('To access the service you must provide at least a read "key" as a parameter of the transaction.')
-
     sqlconn = sqlite3.connect('data.db') 
     c = sqlconn.cursor()
 
+    # Some initial setup...
+    #a = hashlib.sha512(b'staylor:k3r9').hexdigest()
+    #c.execute('UPDATE personnel_auth SET username = "staylor", hash = "%s" WHERE id = 4' % a)
+    #sqlconn.commit()
+
+
+    # Do we know this personnel?
+    c.execute('SELECT id, username FROM personnel_auth WHERE hash = "%s"' % args['key'])
+    pread = False
+    pwrite = False
+    result = c.fetchone()
+    if result is None:
+        raise Exception('Access was denied based on authentication.')
+    cur_username = result[1]
+    cur_id = int(result[0])
+    # What permissions do they have?
+    c.execute('SELECT canwrite FROM personnel_perm_rw WHERE id = %s' % result[0])
+    result = c.fetchone()
+    if result is None:
+        raise Exception('The personnel has no entry for read/write permission.')
+    # Allows future support of more values to represent special permission.
+    if result[0] == 1:
+        pwrite = True;
+        pread = True
+    if result[0] == 0:
+        pread = True
+
+    if pread is False:
+        raise Exception('You must have at least read permission to access the system.')
+
+    if op == 'verify':
+        out = pwrite
+        return { 'perm': result[0], 'username': cur_username, 'id': cur_id }
     if op == 'enum_years':
         grp = args['grp']        
         c.execute('SELECT DISTINCT strftime("%%Y", date) FROM grp_%s ORDER BY date' % 'driver')
@@ -51,8 +79,8 @@ def reqmain(args):
         tmonth = '%02d' % (int(args['to_month']))
         tday = '%02d' % int(args['to_day'])
         c.execute(
-            'SELECT strftime("%%Y", date), strftime("%%m", date), strftime("%%d", date), text FROM grp_driver WHERE date >= julianday("%s-%s-%s") and date < julianday("%s-%s-%s") ORDER BY date' %
-            (fyear, fmonth, fday, tyear, tmonth, tday)
+            'SELECT strftime("%%Y", date), strftime("%%m", date), strftime("%%d", date), text FROM grp_%s WHERE date >= julianday("%s-%s-%s") and date < julianday("%s-%s-%s") ORDER BY date' %
+            (grp, fyear, fmonth, fday, tyear, tmonth, tday)
         )
         out = []
         for rec in c.fetchall():
@@ -66,7 +94,7 @@ def reqmain(args):
         tmonth = '%02d' % (int(args['to_month']))
         tday = '%02d' % int(args['to_day'])
         c.execute('''
-            SELECT id, datetime(datetime, "unixepoch"), crew, disposition FROM ilog
+            SELECT id, datetime, crew, disposition FROM ilog
                 WHERE datetime >= strftime("%%s", "%s-%s-%s") AND
                       datetime < strftime("%%s", "%s-%s-%s")
         ''' % (fyear, fmonth, fday, tyear, tmonth, tday))
@@ -294,6 +322,14 @@ def tmp():
         ''' % (id, first, middle, last, surname))
 
     def addone(id, datetime, disposition, crew, location):
+        datetime = '%s CDT' % datetime
+
+        tzinfo = {
+            'CDT':    pytz.timezone('CST6CDT')
+        }
+
+        datetime = dateutil.parser.parse(datetime, tzinfos = tzinfo)
+
         c.execute('''
             INSERT INTO ilog (id, datetime, location, crew, disposition)
                 VALUES (%s, strftime('%%s', "%s"), "%s", "%s", %s)
