@@ -8,7 +8,18 @@
                 color:              #222222;
                 font-family:        Tahoma;
             }
-            input.ui {
+            .badinput {
+                background-color:  #ff9999 !important;
+            }
+            .goodinput {
+                background-color:  #99ff99 !important;
+            }            
+            .ui select {
+                border-radius:      4px;
+                background-color:   #e3dba9;
+                box-shadow:         3px 3px 1px #7a702f;                
+            }
+            .ui input {
                 border-radius:      4px;
                 background-color:   #e3dba9;
                 box-shadow:         3px 3px 1px #7a702f;
@@ -21,7 +32,7 @@
         <script language="javascript" src="./lib/plugin_login.js"></script>
         <div style="position: absolute;" id="frame_ui" class="ui">
         </div>
-        <div style="visibility: hidden; text-align: center; position: absolute; width: 100%; height: 100%; background-color: rgba(190, 190, 190, 0.5)" id="waitscreen">
+        <div style="visibility: hidden; text-align: center; width: 100%; height: 100%; background-color: rgba(190, 190, 190, 0.5)" id="waitscreen">
         </div>        
         <script language="javascript">
             /*
@@ -46,15 +57,17 @@
                 this.prefix = frame.id + '__';
 
                 frame.style.margin = '10px';
+                frame.style.display = 'inline-block';
 
                 $(frame).append('<span style="display: inline; font-size: 3em; color: #cccccc;">Time Keeper</span> <img style="width: 30px; height: 30px;" src="logo.png"/> <i style="color: #666666; font-size: 0.5em;">version 0.0.1</i><hr/><br/>');
 
                 var menu = document.createElement('div');
                 var container = document.createElement('div');
 
-                $(frame).append(menu, container);
+                $(frame).append(menu, '<br/>', container);
 
                 container.style.margin = '10px';
+                container.style.display = 'inline-block';
 
                 this.plugins = {
                     'Login':         plugin_Login,
@@ -63,25 +76,118 @@
                     'Reports':       plugin_Reports,
                 }
 
+
+                var default_plugin = 'Login';
+
                 menu.className = 'ui';
 
+                function Version1IF(tk) {
+                    this.tk = tk;
+                }
+
+                /*
+                    This allows the plugin to set information about itself
+                    that could not otherwise have been passed by the constr-
+                    uctor. Otherwise, the plugin would require a second init
+                    function to make usage of its
+                */
+                Version1IF.prototype.register = function (plugin) {
+                    this.plugin = plugin;
+                };
+
+                Version1IF.prototype.log = function (msg) {
+                    if (this.console == undefined) {
+                        this.console = this.getPlugin('Console');
+                    }
+
+                    if (this.console != null) {
+                        this.console.write('{0}: {1}'.format(this.plugin.name, msg));
+                    } 
+                }
+
+                Version1IF.prototype.getAuthHash = function () {
+                    if (this.getPlugin('Login') == undefined) {
+                        return undefined;
+                    }
+
+                    return this.getPlugin('Login').getAuthHash();
+                }
+
+                Version1IF.prototype.getPlugin = function (name) {
+                    if (!(name in this.tk.plugins)) {
+                        return null;
+                    }
+                    return this.tk.plugins[name].object;
+                };
+
+                var __plugins = this.plugins;
+
                 for (var k in this.plugins) {
-                    alert('loading plugin ' + k);
                     var newframe = document.createElement('div');
-                    newframe.style.position = 'absolute';
                     newframe.className = 'ui';
-                    newframe.style.width = '500px';
+                    newframe.style.display = 'inline-block';
+                    if (default_plugin == k) {
+                        $(newframe).show();
+                        this.plugins[k].visible = true;
+                    } else {
+                        $(newframe).hide();
+                        this.plugins[k].visible = false;
+                    }
+                    /*
+                        The constructor for the plugin is executed. The
+                        plugin must be careful and only perform quick
+                        critical initialization of important structures.
+                    */
+                    var iface = new Version1IF(this);
                     this.plugins[k] = {
-                        'object':          new plugin_Login(this, newframe), 
+                        'object':          new this.plugins[k](iface, newframe), 
                         'frame':           newframe,
+                        'iface':           iface,
                     };
+                    /*
+                        The interface needs a reference to the plugin and
+                        we had to wait to give it to it.
+                    */
+                    iface.register(this.plugins[k].object);
+
                     $(container).append(newframe);
                     var menubtn = document.createElement('input');
                     menubtn.type = 'submit';
                     menubtn.value = k;
                     menubtn.className = 'ui';
+                    menubtn.pluginName = k;
+                    menubtn.onclick = function () {
+                        var v;
+                        for (var k in __plugins) {
+                            if (k == this.pluginName) {
+                                if (!__plugins[k].visible) {
+                                    if ('onshow' in __plugins[k].object) {
+                                        __plugins[k].object.onshow();
+                                    }
+                                }
+                                $(__plugins[k].frame).show();
+                                __plugins[k].visible = true;
+                            } else {
+                                if (__plugins[k].visible) {
+                                    if ('onhide' in __plugins[k].object) {
+                                        __plugins[k].object.onhide();
+                                    }
+                                }
+                                $(__plugins[k].frame).hide();
+                                __plugins[k].visible = false;
+                            }
+                        }
+                    }
                     $(menu).append(menubtn);
                 }
+
+                for (var k in this.plugins) {
+                    /*
+                        At this point the plugin has full usage of the
+                        interface facilities.
+                    */
+                    this.plugins[k].object.init();
+                }                
             }
 
             var g__tk = new TimeKeeper(frame_ui);
