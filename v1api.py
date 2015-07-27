@@ -103,6 +103,8 @@ def reqmain(args):
             out.append((rec[0], rec[1], rec[2], rec[3]))
         return out
     if op == 'get_personnel_attributes':
+        if 'ids' not in args:
+            return {}
         ids = args['ids'].split(',')
         out = {}
         for i in ids:
@@ -114,6 +116,8 @@ def reqmain(args):
         return out
 
     if op == 'get_personnel_ids':
+        if 'names' not in args:
+            return {'mapping': {}, 'error': {}}
         names = args['names'].split(',')
         out = {}
         out['mapping'] = {}
@@ -217,7 +221,7 @@ def get_personnel_id_fromname(name, cursor):
     return match
 
 
-def tmp():
+def addcallsandpersonnel():
     sqlconn = sqlite3.connect('data.db')
     c = sqlconn.cursor()
 
@@ -386,7 +390,7 @@ def tmp():
     addone(1506204, '2015-06-28 15:31', 8, getcrew('1:andrew,0:jesse'), '4249 claud rd')
     sqlconn.commit()
 
-#tmp()
+#addcallsandpersonnel()
 #conversion()
 
 webcore.start(reqmain)

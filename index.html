@@ -2,29 +2,7 @@
 <html>
     <head>
         <script type="text/javascript" src="jquery-2.1.4.js"></script>
-        <style>
-            body {
-                background-color:   #988e4e;
-                color:              #222222;
-                font-family:        Tahoma;
-            }
-            .badinput {
-                background-color:  #ff9999 !important;
-            }
-            .goodinput {
-                background-color:  #99ff99 !important;
-            }            
-            .ui select {
-                border-radius:      4px;
-                background-color:   #e3dba9;
-                box-shadow:         3px 3px 1px #7a702f;                
-            }
-            .ui input {
-                border-radius:      4px;
-                background-color:   #e3dba9;
-                box-shadow:         3px 3px 1px #7a702f;
-            }
-        </style>
+        <link rel="stylesheet" type="text/css" href="default.css"/>
     </head>
     <body>
         <script language="javascript" src="./lib/sha512.js"></script>
@@ -70,10 +48,11 @@
                 container.style.display = 'inline-block';
 
                 this.plugins = {
-                    'Login':         plugin_Login,
-                    'Console':       plugin_Console,
-                    'Calendar':      plugin_Calendar,
-                    'Reports':       plugin_Reports,
+                    'Reports':          plugin_Reports,
+                    'Login':            plugin_Login,
+                    'Console':          plugin_Console,
+                    'Calendar':         plugin_Calendar,
+                    'PersonnelManager': plugin_PersonnelManager,
                 }
 
 
