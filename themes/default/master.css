@@ -1,0 +1,124 @@
+span {
+    white-space: nowrap;
+}
+
+.uiframe {
+    margin:     10px;
+    display:    inline-block;
+}
+
+.xemoTitleName {
+    font-size:           2.4em;
+    font-family:         Impact;
+}
+
+body {
+    background-color:   #15191f;
+    color:              #eeeeee;
+    font-family:        Verdana;
+    font-size:          medium;
+}
+
+.badinput {
+    background-color:   #ffdd99 !important;;
+    box-shadow:         0px 0px 6px #ffff99 !important;
+    border:             1px solid #ffff99 !important;
+}
+
+.goodinput {
+}
+
+hr {
+    box-shadow:        0px 0px 6px #cccccc;
+    margin:            10px 0px 10px 0px;
+}
+
+.ui select {
+    background-color:   #ccffcc;
+    border-radius:     4px;
+    border:            1px solid white;
+    padding:           4px;
+    margin:            4px;
+    box-shadow:        0px 0px 6px #ffffff;
+    font-family:       Verdana;
+}
+
+.ui input {
+    font-family:       Verdana;
+    background-color:  #ccffcc;
+    border-radius:     4px;
+    border:            1px solid white;
+    padding:           4px;
+    margin:            4px;
+    box-shadow:        0px 0px 6px #ffffff;
+}
+
+.ui input[type="submit"] {
+    font-family:        Tahoma;
+    border-radius:      4px;
+    background-color:   #33dd33;
+    border:             1px solid #99ff99;
+    padding:            5px;
+    margin:             4px;
+    box-shadow:         0px 0px 6px #00ff00;
+}
+
+.standard table {
+    border:             1px solid #cccccc;
+}
+
+.standard td {
+    border:             1px solid #cccccc;
+    background-color:   #e3dba9;
+    font-family:        monospace;
+    padding:            5px;
+    white-space:        nowrap;
+}
+
+.condensed table {
+
+}
+
+.condensed td {
+
+}
+
+.xemo_WaitFrame {
+    border-radius: 0px;
+    display: table;
+    position: absolute;
+    background-color: rgba(21, 25, 31, 0.9);
+    font-family: Tahoma;
+    color: white;
+    text-align: center;
+}
+
+@media print {
+    body {
+        background-color:  #ffffff;
+    }
+
+    .standard table {
+        border:         1px solid #000000;
+    }
+    .standard tb {
+        border:         1px solid #000000;
+    }
+
+    .condensed table {
+        border:         1px solid #000000;
+    }
+    .condensed td {
+        border:         1px solid #000000;
+    }
+
+    table {
+        border-collapse: collapse;
+        border:          1px solid #000000;
+        font-size:       0.5em;
+    }
+
+    td {
+        border:   1px solid #000000;
+    }
+}

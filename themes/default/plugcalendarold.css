@@ -1,0 +1,109 @@
+.plugCalendar {
+    background-color: white; 
+    border: 1px solid Gray; 
+    border-collapse: collapse; 
+    width: 8.5in; 
+    font-family: Georgia, Times, serif;
+}
+
+.dayUnderlay {
+    position: absolute;
+}
+
+.dayOverlay {
+    position: absolute;
+    margin: auto;
+    font-family: monospace;
+    z-index: 100;
+} 
+
+.linkPrev {
+    font-size:  10pt;
+    padding:    0.1in;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.linkNext {
+    font-size:  10pt;
+    padding:    0.1in;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.plugCalendar .titleCell {
+    font-size:      24pt;
+    text-align:     center;
+}
+
+.plugCalendar .dayEditBox {
+    padding:    0px; 
+    display:    block; 
+    margin:     0px; 
+    border:     none; 
+    vertical-align: top; 
+    resize: none; 
+    overflow: hidden; 
+    font-size: 80%; 
+    font-family: Arial;
+    background-color: transparent;
+}
+
+.plugCalendar .dayCell {
+    border: 1px solid gray; 
+    vertical-align: top;
+}
+
+.plugCalendar .Ready {
+    background-color:   transparent;
+}
+
+.plugCalendar .Dirty {
+    background-color:   #ffcce6;
+}
+
+.plugCalendar .Locking {
+    background-color:   #ff9999;
+}
+
+.plugCalendar .LockedByOther {
+    background-color:   #ffff99;
+}
+
+.plugCalendar .LockedByMe {
+    background-color:   transparent;
+}
+
+@media print {
+    body {
+        background-color:  #ffffff;
+    }
+
+    .plugCalendar {
+        width:      9.5in;
+        height:     100%;
+    }
+
+    .standard table {
+        border:         1px solid #000000;
+    }
+    .standard tb {
+        border:         1px solid #000000;
+    }
+
+    .condensed table {
+        border:         1px solid #000000;
+    }
+    .condensed td {
+        border:         1px solid #000000;
+    }
+
+    table {
+        border-collapse: collapse;
+        border:          1px solid #000000;
+    }
+
+    td {
+        border:   1px solid #000000;
+    }
+}

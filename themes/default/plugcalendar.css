@@ -1,0 +1,114 @@
+.plugCalendar {
+    border:              1px solid gray; 
+    border-collapse:     collapse;
+    width:               8.5in; 
+    font-family:         Georgia, Times, serif;
+    background-color:    #25292f;
+}
+
+.dayUnderlay {
+    position: absolute;
+}
+
+.dayOverlay {
+    position: absolute;
+    margin: auto;
+    font-family: monospace;
+    z-index: 100;
+} 
+
+.linkPrev {
+    font-size:       medium;
+    padding:         0.3in;
+    text-decoration: underline;
+    color: #15ff1f;
+    cursor: pointer;
+}
+
+.linkNext {
+    font-size:  medium;
+    padding:    0.3in;
+    color: #15ff1f;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.plugCalendar .titleCell {
+    font-size:      3em;
+    text-align:     center;
+}
+
+.plugCalendar .dayEditBox {
+    padding:    0px; 
+    display:    block; 
+    margin:     0px; 
+    border:     none; 
+    vertical-align: top; 
+    color: inherit;
+    resize: none; 
+    overflow: hidden; 
+    font-size: 80%; 
+    font-family: Arial;
+    background-color: transparent;
+}
+
+.plugCalendar .dayCell {
+    border: 1px solid gray; 
+    vertical-align: top;
+}
+
+.plugCalendar .Ready {
+    background-color:   transparent;
+}
+
+.plugCalendar .Dirty {
+    background-color:   #ff99e6;
+    color: #000000;
+}
+
+.plugCalendar .Locking {
+    background-color:   #663333;
+}
+
+.plugCalendar .LockedByOther {
+    background-color:   rgba(255, 255, 0, 0.8);
+    color: black;
+}
+
+.plugCalendar .LockedByMe {
+    background-color:   transparent;
+}
+
+@media print {
+    body {
+        background-color:  #ffffff;
+    }
+
+    .plugCalendar {
+        width:      9.5in;
+        height:     100%;
+    }
+
+    .standard table {
+        border:         1px solid #000000;
+    }
+    .standard tb {
+        border:         1px solid #000000;
+    }
+
+    .condensed table {
+        border:         1px solid #000000;
+    }
+    .condensed td {
+        border:         1px solid #000000;
+    }
+
+    table {
+        border-collapse: collapse;
+        border:          1px solid #000000;
+    }
+
+    td {
+        border:   1px solid #000000;
+    }
+}
