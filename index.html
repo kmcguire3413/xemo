@@ -2,13 +2,16 @@
 <html>
     <head>
         <script type="text/javascript" src="jquery-2.1.4.js"></script>
-        <link rel="stylesheet" type="text/css" href="default.css"/>
+        <link rel="stylesheet" title="newstyle" type="text/css" href="default.css"/>
+        <link rel="stylesheet" type="text/css" href="plugcalendar.css"/>
     </head>
     <body>
         <script language="javascript" src="./lib/sha512.js"></script>
         <script language="javascript" src="./lib/core.js"></script>
         <script language="javascript" src="./lib/plugin_login.js"></script>
-        <div style="position: absolute;" id="frame_ui" class="ui">
+        <script language="javascript" src="./lib/plugin_reports.js"></script>
+        <script language="javascript" src="./lib/plugin_calendar.js"></script>
+        <div style="position: absolute;" id="frame_ui" class="uiframe">
         </div>
         <div style="visibility: hidden; text-align: center; width: 100%; height: 100%; background-color: rgba(190, 190, 190, 0.5)" id="waitscreen">
         </div>        
@@ -17,7 +20,7 @@
                 This will return the parameters supplied in the
                 URL string that was used to access this document.
             */
-            function GetURLParameters() {
+            function getURLParameters() {
                 var url = window.location.search.substring(1);
                 var vars = url.split('&');
                 var table = {};
@@ -30,33 +33,28 @@
                 return table;
             }
 
-            function TimeKeeper(frame) {
+            function TimeKeeper(frame, default_plugin, no_menu) {
                 var __tk = this;
                 this.prefix = frame.id + '__';
 
-                frame.style.margin = '10px';
-                frame.style.display = 'inline-block';
+                this.urlparameters = getURLParameters();
 
-                $(frame).append('<span style="display: inline; font-size: 3em; color: #cccccc;">Time Keeper</span> <img style="width: 30px; height: 30px;" src="logo.png"/> <i style="color: #666666; font-size: 0.5em;">version 0.0.1</i><hr/><br/>');
+                if (!no_menu) {
+                    $(frame).append('<span style="display: inline; font-size: 3em; color: #cccccc;">Xemo</span> <img style="width: 30px; height: 30px;" src="logo.png"/> <i style="color: #666666; font-size: 0.5em;">version 0.0.1</i><hr/><br/>');
+                }
 
                 var menu = document.createElement('div');
                 var container = document.createElement('div');
 
-                $(frame).append(menu, '<br/>', container);
-
-                container.style.margin = '10px';
-                container.style.display = 'inline-block';
-
-                this.plugins = {
-                    'Reports':          plugin_Reports,
-                    'Login':            plugin_Login,
-                    'Console':          plugin_Console,
-                    'Calendar':         plugin_Calendar,
-                    'PersonnelManager': plugin_PersonnelManager,
+                if (!no_menu) {
+                    $(frame).append(menu, '<br/>');
                 }
 
+                $(frame).append(container);
 
-                var default_plugin = 'Login';
+                if (!(default_plugin in xemo.plugins)) {
+                    default_plugin = 'Login';
+                }
 
                 menu.className = 'ui';
 
@@ -74,6 +72,10 @@
                     this.plugin = plugin;
                 };
 
+                Version1IF.prototype.getURLParameters = function () {
+                    return this.tk.urlparameters;
+                }
+
                 Version1IF.prototype.log = function (msg) {
                     if (this.console == undefined) {
                         this.console = this.getPlugin('Console');
@@ -82,6 +84,10 @@
                     if (this.console != null) {
                         this.console.write('{0}: {1}'.format(this.plugin.name, msg));
                     } 
+                }
+
+                Version1IF.prototype.showPlugin = function (name) {
+                    this.tk.showPlugin(name);
                 }
 
                 Version1IF.prototype.getAuthHash = function () {
@@ -93,41 +99,34 @@
                 }
 
                 Version1IF.prototype.getPlugin = function (name) {
-                    if (!(name in this.tk.plugins)) {
+                    if (!(name in xemo.plugins)) {
                         return null;
                     }
-                    return this.tk.plugins[name].object;
+                    return xemo.plugins[name].object;
                 };
 
-                var __plugins = this.plugins;
-
-                for (var k in this.plugins) {
+                for (var k in xemo.plugins) {
                     var newframe = document.createElement('div');
                     newframe.className = 'ui';
                     newframe.style.display = 'inline-block';
-                    if (default_plugin == k) {
-                        $(newframe).show();
-                        this.plugins[k].visible = true;
-                    } else {
-                        $(newframe).hide();
-                        this.plugins[k].visible = false;
-                    }
+
+                    $(newframe).hide();
+
                     /*
                         The constructor for the plugin is executed. The
                         plugin must be careful and only perform quick
                         critical initialization of important structures.
                     */
                     var iface = new Version1IF(this);
-                    this.plugins[k] = {
-                        'object':          new this.plugins[k](iface, newframe), 
-                        'frame':           newframe,
-                        'iface':           iface,
-                    };
+                    xemo.plugins[k].object = new xemo.plugins[k](iface, newframe);
+                    xemo.plugins[k].frame = newframe;
+                    xemo.plugins[k].iface = iface;
+
                     /*
                         The interface needs a reference to the plugin and
                         we had to wait to give it to it.
                     */
-                    iface.register(this.plugins[k].object);
+                    iface.register(xemo.plugins[k].object);
 
                     $(container).append(newframe);
                     var menubtn = document.createElement('input');
@@ -135,41 +134,81 @@
                     menubtn.value = k;
                     menubtn.className = 'ui';
                     menubtn.pluginName = k;
+                    menubtn.tk = this;
                     menubtn.onclick = function () {
-                        var v;
-                        for (var k in __plugins) {
-                            if (k == this.pluginName) {
-                                if (!__plugins[k].visible) {
-                                    if ('onshow' in __plugins[k].object) {
-                                        __plugins[k].object.onshow();
-                                    }
-                                }
-                                $(__plugins[k].frame).show();
-                                __plugins[k].visible = true;
-                            } else {
-                                if (__plugins[k].visible) {
-                                    if ('onhide' in __plugins[k].object) {
-                                        __plugins[k].object.onhide();
-                                    }
-                                }
-                                $(__plugins[k].frame).hide();
-                                __plugins[k].visible = false;
-                            }
-                        }
+                        this.tk.showPlugin(this.pluginName);
                     }
                     $(menu).append(menubtn);
                 }
 
-                for (var k in this.plugins) {
+                for (var k in xemo.plugins) {
                     /*
                         At this point the plugin has full usage of the
                         interface facilities.
                     */
-                    this.plugins[k].object.init();
+                    alert('k: ' + k);
+                    xemo.plugins[k].object.init();                    
+                }
+
+                for (var k in xemo.plugins) {
+                    if (default_plugin == k) {
+                        $(xemo.plugins[k].frame).show();
+                        xemo.plugins[k].visible = true;
+                        if ('onshow' in xemo.plugins[k].object) {
+                            xemo.plugins[k].object.onshow();
+                        }                        
+                    } else {
+                        $(xemo.plugins[k].frame).hide();
+                        xemo.plugins[k].visible = false;
+                    }                    
+                }
+            }
+
+            TimeKeeper.prototype.showPlugin = function (name) {
+                var v;
+                for (var k in xemo.plugins) {
+                    if (k == name) {
+                        if (!xemo.plugins[k].visible) {
+                            if ('onshow' in xemo.plugins[k].object) {
+                                xemo.plugins[k].object.onshow();
+                            }
+                        }
+                        $(xemo.plugins[k].frame).show();
+                        xemo.plugins[k].visible = true;
+                    } else {
+                        if (xemo.plugins[k].visible) {
+                            if ('onhide' in xemo.plugins[k].object) {
+                                xemo.plugins[k].object.onhide();
+                            }
+                        }
+                        $(xemo.plugins[k].frame).hide();
+                        xemo.plugins[k].visible = false;
+                    }
                 }                
             }
 
-            var g__tk = new TimeKeeper(frame_ui);
+            var params = getURLParameters();
+
+            if (params.oldstyle == 'true') {
+                var links = document.getElementsByTagName('link');
+                for (var x = 0; x < links.length; ++x) {
+                    var sheet = links[x];
+                    if (sheet.title == undefined) {
+                        continue;
+                    }
+                    if (sheet.title == 'newstyle') {
+                        sheet.disabled = true;
+                    }
+                }
+            }
+
+            if (params.no_menu == 'true') {
+                params.no_menu = true;
+            } else {
+                params.no_menu = false;
+            }
+
+            var g__tk = new TimeKeeper(frame_ui, params.defplug || 'Login', params.no_menu);
 
             month_num_to_name = [
                 'Error',

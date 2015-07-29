@@ -1,30 +1,42 @@
 span {
     white-space: nowrap;
 }
+
+.uiframe {
+    margin: 10px;
+    display: inline-block;
+}
+
 body {
     background-color:   #988e4e;
     color:              #222222;
     font-family:        Tahoma;
 }
+
 .badinput {
     background-color:  #ff9999 !important;
 }
+
 .goodinput {
     background-color:  #99ff99 !important;
-}            
+}
+
 .ui select {
     border-radius:      4px;
     background-color:   #e3dba9;
     box-shadow:         3px 3px 1px #7a702f;                
 }
+
 .ui input {
     border-radius:      4px;
     background-color:   #e3dba9;
     box-shadow:         3px 3px 1px #7a702f;
 }
+
 .standard table {
     border:             1px solid #cccccc;
 }
+
 .standard td {
     border:             1px solid #cccccc;
     background-color:   #e3dba9;
@@ -32,14 +44,14 @@ body {
     padding:            5px;
     white-space:        nowrap;
 }
+
 .condensed table {
 
 }
-s
+
 .condensed td {
 
 }
-
 
 @media print {
     body {

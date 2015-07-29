@@ -8,6 +8,7 @@ import time
 import dateutil.parser
 import pytz
 import hashlib
+import traceback
 
 def reqmain(args):
     op = args['op']
@@ -16,10 +17,15 @@ def reqmain(args):
     c = sqlconn.cursor()
 
     # Some initial setup...
-    #a = hashlib.sha512(b'staylor:k3r9').hexdigest()
-    #c.execute('UPDATE personnel_auth SET username = "staylor", hash = "%s" WHERE id = 4' % a)
-    #sqlconn.commit()
+    #a = hashlib.sha512(b'kmcguire:k3r9').hexdigest()
+    #c.execute('UPDATE personnel_auth SET username = "kmcguire", hash = "%s" WHERE id = 2' % a)
+    a = hashlib.sha512(b'anybody:ems').hexdigest()
+    c.execute('UPDATE personnel_auth SET username = "anybody", hash = "%s" WHERE id = 15' % a)    
+    sqlconn.commit()
 
+    fd = open('tmp', 'w')
+    fd.write(args['key'])
+    fd.close();
 
     # Do we know this personnel?
     c.execute('SELECT id, username FROM personnel_auth WHERE hash = "%s"' % args['key'])
@@ -62,6 +68,63 @@ def reqmain(args):
         for rec in c.fetchall():
             out.append(int(rec[0]))
         return out
+    if op == 'dayunlock':
+        grp = args['grp']
+        year = '%04d' % int(args['year'])
+        month = '%02d' % int(args['month'])
+        day = '%02d' % int(args['day'])        
+        c.execute('''
+            INSERT OR REPLACE INTO grpdaylock_{grp}
+                SELECT date, lockeduntil, bypid FROM (
+                SELECT date, lockeduntil, bypid, 1 AS tmp FROM grpdaylock_{grp}
+                    WHERE grpdaylock_{grp}.date = julianday("{year}-{month}-{day}") AND
+                    grpdaylock_{grp}.bypid <> {pid}
+                UNION
+                    SELECT julianday("{year}-{month}-{day}") AS date, 0 As lockeduntil, 0 as bypid, 0 AS tmp)
+                ORDER BY tmp DESC
+                LIMIT 1;
+            SELECT date, lockeduntil, bypid FROM grpdaylock_driver
+                WHERE date = julianday("{year}-{month}-{day}")
+        ''')
+        return 'success'
+    if op == 'daylock':
+        if pwrite is False:
+            raise Exception('You need write permission to lock a day for editing.')
+        # In order to reduce bugs we do the check in SQL to see if the day can be locked
+        # by using the current SQL time, and we also make SQL produce a locked until time.
+        grp = args['grp']
+        year = '%04d' % int(args['year'])
+        month = '%02d' % int(args['month'])
+        day = '%02d' % int(args['day'])
+        delta = int(args['delta']);
+        sql = '''
+            INSERT OR REPLACE INTO grpdaylock_{grp}
+                SELECT date, lockeduntil, bypid FROM (
+                SELECT date, lockeduntil, bypid, 1 AS tmp FROM grpdaylock_{grp}
+                    WHERE grpdaylock_{grp}.date = julianday("{year}-{month}-{day}") AND
+                    grpdaylock_{grp}.lockeduntil >= strftime("%s", "now")
+                UNION
+                    SELECT julianday("{year}-{month}-{day}") AS date, (strftime("%s", "now") + {delta}) As lockeduntil, {pid} as bypid, 0 AS tmp)
+                ORDER BY tmp DESC
+                LIMIT 1;
+        '''.format(
+                grp = grp,
+                delta = delta,
+                year = year, month = month, day = day, pid = cur_id
+            )
+        c.execute(sql);
+        c.execute('''
+            SELECT date, lockeduntil, bypid FROM grpdaylock_{grp}
+                WHERE date = julianday("{year}-{month}-{day}");           
+        '''.format(
+            grp = grp, year = year, month = month, day = day
+        ))
+        rec = c.fetchone()
+        if int(rec[2]) == cur_id:
+            # Since we did a write. Let us be explicit that we want to commit the transaction.
+            sqlconn.commit()
+            return { 'code': 'accepted', 'pid': cur_id }
+        return { 'code': 'denied', 'pid': rec[2] }
     if op == 'dayread':
         grp = args['grp']
         year = '%04d' % int(args['year'])
@@ -70,6 +133,23 @@ def reqmain(args):
         #return 'SELECT text FROM grp_%s WHERE date = "%s-%s-%s"' % (grp, year, month, day)
         c.execute('SELECT text FROM grp_%s WHERE date = julianday("%s-%s-%s") ORDER BY date' % (grp, year, month, day))
         return c.fetchone()[0]
+    if op == 'daywrite':
+        if pwrite is False:
+            raise Exception('You need write permission to write to a day.')        
+        grp = args['grp']
+        year = '%04d' % int(args['year'])
+        month = '%02d' % int(args['month'])
+        day = '%02d' % int(args['day'])
+        sql = 'INSERT OR REPLACE INTO grp_{group} (date, text) VALUES (julianday("{year}-{month}-{day}"), "{text}")'.format(
+            group = grp,
+            year = year,
+            month = month,
+            day = day,
+            text = args['txt'].replace('\n', '\x06').replace('\r', '')
+        )
+        c.execute(sql)
+        sqlconn.commit()
+        return 'success'
     if op == 'readcalendar':
         grp = args['grp']
         fyear = '%04d' % int(args['from_year'])
@@ -114,7 +194,21 @@ def reqmain(args):
             for rec in c.fetchall():
                 out[i].append(int(rec[0]))
         return out
-
+    if op == 'get_personnel_names':
+        if 'ids' not in args:
+            return {'mapping': {}, 'error': {}}
+        ids = args['ids'].split(',')
+        for x in range(0, len(ids)):
+            ids[x] = int(ids[x])
+        out = {}
+        out['mapping'] = {}
+        c.execute('SELECT id, firstname, middlename, lastname, surname FROM personnel')
+        for rec in c.fetchall():
+            if rec[0] in ids:
+                out['mapping'][rec[0]] = '%s %s %s %s' % (rec[1], rec[2], rec[3], rec[4])
+                ids.remove(rec[0])
+        out['error'] = ids;
+        return out
     if op == 'get_personnel_ids':
         if 'names' not in args:
             return {'mapping': {}, 'error': {}}
@@ -127,7 +221,7 @@ def reqmain(args):
             try:
                 out['mapping'][name] = int(get_personnel_id_fromname(name, c))
             except Exception as e:
-                out['error'][name] = '%s' % e
+                out['error'][name] = traceback.format_exc()
         return out
 
     raise Exception('The operation specified was not supported.')
