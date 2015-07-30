@@ -194,6 +194,35 @@ def reqmain(args):
             for rec in c.fetchall():
                 out[i].append(int(rec[0]))
         return out
+    if op == 'getpaysysinfo':
+        out = {
+            'mapping': {},
+            'systems': {},
+            'error':   {}
+        }
+        if 'ids' not in args:
+            return out
+        ids = args['ids'].split(',');
+        for x in range(0, len(ids)):
+            ids[x] = int(ids[x]);
+        c.execute('SELECT pid, sysid FROM personnel_paysystem')
+        for rec in c.fetchall():
+            pid = int(rec[0])
+            sysid = int(rec[1])
+            if pid in ids:
+                out['mapping'][pid] = sysid
+        c.execute('SELECT sysid, sysname, config, desc FROM paysystem_spec')
+        for rec in c.fetchall():
+            sysid = rec[0]
+            sysname = rec[1]
+            config = rec[2]
+            desc = rec[3]
+            out['systems'][sysid] = {
+                'sysname':     sysname,
+                'config':      config,
+                'desc':        desc
+            }
+        return out
     if op == 'get_personnel_names':
         if 'ids' not in args:
             return {'mapping': {}, 'error': {}}
