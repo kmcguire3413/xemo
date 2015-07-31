@@ -211,16 +211,18 @@ def reqmain(args):
             sysid = int(rec[1])
             if pid in ids:
                 out['mapping'][pid] = sysid
-        c.execute('SELECT sysid, sysname, config, desc FROM paysystem_spec')
+        c.execute('SELECT sysid, sysname, config, desc, payperiodref FROM paysystem_spec')
         for rec in c.fetchall():
             sysid = rec[0]
             sysname = rec[1]
             config = rec[2]
             desc = rec[3]
+            payperiodref = rec[4];
             out['systems'][sysid] = {
-                'sysname':     sysname,
-                'config':      config,
-                'desc':        desc
+                'sysname':      sysname,
+                'config':       config,
+                'desc':         desc,
+                'payperiodref': payperiodref
             }
         return out
     if op == 'get_personnel_names':
@@ -238,6 +240,19 @@ def reqmain(args):
                 ids.remove(rec[0])
         out['error'] = ids;
         return out
+    if op == 'get_personnel_data':
+        c.execute('SELECT id, firstname, middlename, lastname, surname, dateadded FROM personnel')
+        out = {}
+        for rec in c.fetchall():
+            out[int(rec[0])] = {
+                'firstname':   rec[1],
+                'middlename':  rec[2],
+                'lastname':    rec[3],
+                'surname':     rec[4],
+                'dateadded':   rec[5]
+            }
+        return out
+    # DEPRECATED
     if op == 'get_personnel_ids':
         if 'names' not in args:
             return {'mapping': {}, 'error': {}}

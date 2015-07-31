@@ -64,15 +64,15 @@ hr {
 }
 
 .standard table {
-    border:             1px solid #cccccc;
+    border:             1px solid #444444;
+    background-color:   #25292f;
 }
 
 .standard td {
-    border:             1px solid #cccccc;
-    background-color:   #e3dba9;
-    font-family:        monospace;
-    padding:            5px;
-    white-space:        nowrap;
+    border:             1px dashed #444444;
+    background-color:   #25292f;
+    font-family:        Verdana;
+    padding:            2px;
 }
 
 .condensed table {

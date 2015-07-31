@@ -118,6 +118,9 @@
 
                 // Fix this hackish way to do this.
                 var tmp = this;
+                xemo.core.waitError = function (msg) {
+                    tmp.waitError(msg);
+                }
                 xemo.core.waitShow = function (msg) {
                     tmp.waitShow(msg);
                 }
@@ -299,6 +302,7 @@
                     f.apply(obj, args);
                 } catch (err) {
                     this.waitError(err);
+                    throw err;
                     return;
                 }
                 this.waitHide();
