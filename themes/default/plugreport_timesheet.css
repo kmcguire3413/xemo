@@ -1,0 +1,64 @@
+body {
+    font-family: "Century Gothic"; 
+    font-size: 9pt; 
+    line-height: 170%;
+}
+
+.title {
+    position:   absolute; 
+    left:       3.14in; 
+    top:        0.25in; 
+    color:      gray; 
+    font-size:  22pt;
+}
+
+.subtitle {
+    left:       0in; 
+    top:        0.75in;
+    position:   absolute;
+    font-size:  22pt;
+}
+
+.address {
+    position:   absolute; 
+    left:       0in; 
+    top:        1.29in;
+}
+
+.pprangesection {
+    position:   absolute; 
+    left:       3.11in; 
+    top:        1.29in;
+}
+
+.positionsection {
+    position:   absolute; 
+    left:       3.11in; 
+    top:        2.1in;
+}
+
+.signaturesection {
+    position:   absolute; 
+    left:       1.72in; 
+    top:        6.66in;
+}
+
+td {
+    border: 1px solid #666666;
+}
+
+thead {
+    background-color:  #efefef;
+    font-weight:       bold;
+}
+
+table {
+    border-collapse: collapse; 
+    font-family:     "Century Gothic"; 
+    font-size:       9pt;
+    position:        absolute; 
+    left:            0in; 
+    top:             2.7in; 
+    width:           6.5in; 
+    border:          1px solid gray;
+}

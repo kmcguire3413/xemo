@@ -225,6 +225,14 @@ def reqmain(args):
                 'payperiodref': payperiodref
             }
         return out
+    if op == 'gen_document':
+        data = args['data']
+        ext = args['ext']
+        uname = uuid.uuid4().hex
+        fd = open('./temp/' + uname + '.' + ext, 'w')
+        fd.write(data)
+        fd.close()
+        return '/temp/' + uname + '.' + ext
     if op == 'get_personnel_names':
         if 'ids' not in args:
             return {'mapping': {}, 'error': {}}
