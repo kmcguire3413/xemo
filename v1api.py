@@ -197,6 +197,7 @@ def reqmain(args):
     if op == 'getpaysysinfo':
         out = {
             'mapping': {},
+            'ppref':   {},
             'systems': {},
             'error':   {}
         }
@@ -205,12 +206,19 @@ def reqmain(args):
         ids = args['ids'].split(',');
         for x in range(0, len(ids)):
             ids[x] = int(ids[x]);
-        c.execute('SELECT pid, sysid FROM personnel_paysystem')
+        c.execute('SELECT pid, sysid, start, end FROM personnel_paysystem')
         for rec in c.fetchall():
             pid = int(rec[0])
             sysid = int(rec[1])
+            ppstart = int(rec[2])
+            ppend = int(rec[3])
             if pid in ids:
-                out['mapping'][pid] = sysid
+                if pid not in out['mapping']:
+                    out['mapping'][pid] = []
+                out['mapping'][pid].append({ 'sysid': sysid, 'start': ppstart, 'end': ppend })
+        c.execute('SELECT pid, payperiodref FROM personnel_payperiodref')
+        for rec in c.fetchall():
+            out['ppref'][int(rec[0])] = int(rec[1])
         c.execute('SELECT sysid, sysname, config, desc, payperiodref FROM paysystem_spec')
         for rec in c.fetchall():
             sysid = rec[0]
