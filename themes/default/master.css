@@ -12,6 +12,68 @@ span {
     font-family:         Impact;
 }
 
+.xemoPluginAdminDescription {
+    font-style: italic;
+    font-size:  small;
+    width:      70%;
+}
+
+.xemoPluginAdminWizardLink:hover {
+    background-color: #333333;
+    border-radius: 10px;
+    box-shadow: 0px 0px 10px #222222;
+}
+
+.xemoPluginAdminWizardLink {
+    display: inline-block;
+    text-decoration: underline;
+    margin:  8px;
+    padding: 5px;
+    color:  #88ff44;
+    cursor: pointer;
+}
+
+/*
+    Specific to the HTML custom elements.
+*/
+.xemoCoreHtmlUserPaySystemSelectorFrame {
+}
+
+.xemoPluginAdminWizardEditPersonnelSystemSectionFrame {
+    border: 1px solid #3f3f3f;
+    margin: 10px;
+    background-color: #424242;
+    padding: 5px;
+    border-radius: 15px;
+    box-shadow: 0px 0px 10px #313131;
+    display: inline-block;
+}
+
+.xemoCoreHtmlUserPaySystemSelectorOption {
+}
+
+.xemoCoreHtmlUserPaySystemSelectorDescription {
+    display:  block;
+    font-size: small;
+}
+
+/*
+    Specific to the Administration plugin.
+*/
+.xemoPluginAdminWizardEditPersonnelSystemSectionTitle {
+    font-size: large;
+    margin:   15px;
+}
+
+.xemoPluginAdminWizardEditPersonnelSystemSectionDescription {
+    font-size: small;
+    margin: 0px 0px 0px 15px;
+}
+
+.xemoPluginAdminWizardEditPersonnelSystemSectionFrame {
+
+}
+
 body {
     background-color:   #15191f;
     color:              #eeeeee;
@@ -53,6 +115,10 @@ hr {
     box-shadow:        0px 0px 6px #ffffff;
 }
 
+.ui input[type="submit"]:hover {
+    background-color:   #44ff44 !important;
+}
+
 .ui input[type="submit"] {
     font-family:        Tahoma;
     border-radius:      4px;
@@ -61,6 +127,7 @@ hr {
     padding:            5px;
     margin:             4px;
     box-shadow:         0px 0px 6px #00ff00;
+    cursor: pointer;
 }
 
 .standard table {

@@ -19,13 +19,13 @@ def reqmain(args):
     # Some initial setup...
     #a = hashlib.sha512(b'kmcguire:k3r9').hexdigest()
     #c.execute('UPDATE personnel_auth SET username = "kmcguire", hash = "%s" WHERE id = 2' % a)
-    a = hashlib.sha512(b'anybody:ems').hexdigest()
-    c.execute('UPDATE personnel_auth SET username = "anybody", hash = "%s" WHERE id = 15' % a)    
-    sqlconn.commit()
+    #a = hashlib.sha512(b'anybody:ems').hexdigest()
+    #c.execute('UPDATE personnel_auth SET username = "anybody", hash = "%s" WHERE id = 15' % a)    
+    #sqlconn.commit()
 
-    fd = open('tmp', 'w')
-    fd.write(args['key'])
-    fd.close();
+    #fd = open('tmp', 'w')
+    #fd.write(args['key'])
+    #fd.close();
 
     # Do we know this personnel?
     c.execute('SELECT id, username FROM personnel_auth WHERE hash = "%s"' % args['key'])
@@ -53,7 +53,111 @@ def reqmain(args):
 
     if op == 'verify':
         out = pwrite
-        return { 'perm': result[0], 'username': cur_username, 'id': cur_id }
+        return { 'perm': result[0], 'username': cur_username, 'id': cur_id } 
+    if op == 'commitPersonnel':
+        fd = open('tmp', 'w')
+        fd.write('%s' % args)
+        fd.close()
+
+        tocommit = args['tocommit']
+
+        if tocommit['pid'] == -1:
+            # Do an exclusive lock on the database for the remainder of our operations. We
+            # could technically release the lock if we were to reserve by immediantly inserting
+            # the entry into the personnel table, however that will make a personnel entry
+            # avaliable to other clients without the appropriate pay systems written since this
+            # is obviously a new personnel record!
+            c.execute('BEGIN EXCLUSIVE TRANSACTION')
+            c.execute('SELECT max(id) + 1 FROM personnel')
+            tocommit['pid'] = int(c.fetchone()[0])
+        else:
+            # In the case where the PID has already existed then we should be assured that
+            # either the old pay systems will be used or the new, since the modification of
+            # the database after this point will incur an exclusive lock until the commit.
+            pass
+
+        # I use a remove then add process, which is a failure occures should result
+        # in a rollback making the entire transaction void. In that case the personel
+        # would have never actually been removed.
+        #
+        # This way we can support adding completely new personnel and modifying existing
+        # personnel without complicating the code and reduce errors..
+
+        c.execute('''
+            DELETE FROM personnel
+                WHERE id = {pid}
+        '''.format(pid = tocommit['pid']))
+        c.execute('''
+            DELETE FROM personnel_paysystem
+                WHERE pid = {pid}
+        '''.format(pid = tocommit['pid']))
+
+        # The personnel should be removed completely. Now let us add them.
+        for sys in tocommit['systems']:
+            c.execute('''
+                INSERT INTO personnel_paysystem (pid, sysid, start, end) VALUES
+                    ({pid}, {sysid}, {start}, {end})
+            '''.format(
+                pid = tocommit['pid'],
+                sysid = sys['sysid'],
+                start = sys['start'],
+                end = sys['end']
+            ))
+        c.execute('''
+            INSERT INTO personnel (id, firstname, middlename, lastname, surname, dateadded) VALUES
+                ({id}, "{firstname}", "{middlename}", "{lastname}", "{surname}", "{dateadded}") 
+        '''.format(
+            id = tocommit['pid'],
+            firstname = tocommit['firstname'],
+            middlename = tocommit['middlename'],
+            lastname = tocommit['lastname'],
+            surname = tocommit['surname'],
+            dateadded = tocommit['dateadded']
+        ))
+
+        sqlconn.commit()
+        return 'success'
+
+    if op == 'getAllPersonnel':
+        c.execute('SELECT id, firstname, middlename, lastname, surname, dateadded FROM personnel')
+        out = {
+            'personnel':    {},
+            'payspecs':        {}
+        }
+        for rec in c.fetchall():
+            out['personnel'][int(rec[0])] = {
+                'firstname':    rec[1],
+                'middlename':   rec[2],
+                'lastname':     rec[3],
+                'surname':      rec[4],
+                'dateadded':    rec[5],
+                'paysystem':    []
+            }
+        c.execute('SELECT pid, sysid, start, end FROM personnel_paysystem')
+        for rec in c.fetchall():
+            pid = int(rec[0])
+            if pid not in out['personnel']:
+                continue
+            out['personnel'][pid]['paysystem'].append({
+                'sysid':       int(rec[1]),
+                'start':       int(rec[2]),
+                'end':         int(rec[3]),
+            })
+        c.execute('SELECT sysid, sysname, config, desc FROM paysystem_spec')
+        for rec in c.fetchall():
+            out['payspecs'][int(rec[0])] = {
+                'sysname':     rec[1],
+                'config':      rec[2],
+                'desc':        rec[3]
+            }
+        c.execute('SELECT id, canwrite FROM personnel_perm_rw')
+        for rec in c.fetchall():
+            pid = int(rec[0])
+            if pid not in out['personnel']:
+                continue
+            out['personnel'][pid]['perm'] = int(rec[1])
+        return out
+
     if op == 'enum_years':
         grp = args['grp']        
         c.execute('SELECT DISTINCT strftime("%%Y", date) FROM grp_%s ORDER BY date' % 'driver')

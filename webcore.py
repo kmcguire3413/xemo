@@ -7,7 +7,9 @@ import json
 def gethttpargs():
     if os.environ['REQUEST_METHOD'] == 'POST':
         _args = sys.stdin.read()
-        _args = urllib.parse.parse_qsl(_args)
+        _args = json.loads(_args)
+        return _args
+        #_args = urllib.parse.parse_qsl(_args)
     else:
         if 'QUERY_STRING' in os.environ:
             _args = os.environ['QUERY_STRING']
@@ -33,6 +35,9 @@ def start(f):
             'result':     f(gethttpargs())
         }))
     except Exception as e:
+        fd = open('tmp', 'w')
+        fd.write(traceback.format_exc())
+        fd.close()
         print(json.dumps({
             'code':        'error',
             'error':        traceback.format_exc()
