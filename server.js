@@ -1,13 +1,12 @@
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
-const sqlite3 = require('sqlite3');
 const crypto = require('crypto');
 const core = require('./lib/core.js'); 
 const moment = require('moment-timezone');
 const twilio = require('twilio');
-const mysql = require('mysql');
 const domain = require('domain');
+const dbjuggle = require('dbjuggle');
 
 var xemo = {};
 xemo.server = {};
@@ -19,292 +18,6 @@ xemo.server.options = {
     honorCipherOrder: true,
     passphrase: 'tty5413413'
 };
-
-xemo.server.DatabaseGeneric = function (dbcfg, dbspec) {
-    this.dbcfg = dbcfg;
-    this.dbspec = dbspec;
-    this.pending = [];
-    this.pending_lock = false;
-
-    this.process_pending = function (clearlock) {
-        if (clearlock) {
-            // We have finished a transaction, and
-            // we need to clear the lock and execute
-            // any other pending transactions.
-            this.pending_lock = false;
-        }
-
-        if (this.pending_lock) {
-            // We are in the middle of executing
-            // another transaction.
-            return;
-        }
-
-        if (this.pending.length < 1) {
-            // There is nothing left that
-            // is current pending.
-            return;
-        }
-
-        this.pending_lock = true;
-        var next = this.pending.pop();
-        next.__execute(next.cb);
-    };
-
-    var self = this;
-
-    this.transaction = function () {
-        var r = { 
-            dbi:      self,
-            stmts:    [],
-            results:  {},
-            done:     false,
-            executed: false,
-            pending:  0,
-            commited: false,
-
-            locktable: function (table) {
-                if (this.executed) {
-                    throw new Error('This statement has already been executed');
-                }                        
-                this.dbi.dbspec.locktable(this, table);
-            },
-            add: function (sqlstmt, params, key) {
-                if (this.executed) {
-                    throw new Error('This statement has already been executed');
-                }
-                this.stmts.push({
-                    sqlstmt:    sqlstmt, 
-                    params:     params,
-                    resultkey:  key
-                });
-            },
-            execute: function (cb) {
-                if (this.executed) {
-                    throw new Error('This statement has already been executed');
-                }                        
-                // (1) Store the callback.
-                // (2) Add us to pending.
-                // (3) Process the pending queue.
-                this.executed = true;
-                this.cb = cb;
-                this.dbi.pending.push(this);
-                this.dbi.process_pending(false);
-            },
-            __docb: function (cb) {
-                this.done = false;
-                if (cb == true || cb == undefined) {
-                    // If no callback specified, OR the callback
-                    // was set to true, then auto-commit the
-                    // transaction.
-                    return this.commit();
-                }
-                var r = cb(this);
-                // If callback used we only commit if it returned
-                // true and it has not already called commit or
-                // rollback.
-                if (r && !this.done) {
-                    this.commit();
-                }
-                if (!r && !this.done) {
-                    this.rollback();
-                }
-                return this.commited;
-            },  
-            __execute: function (cb) {
-                var self = this;
-                this.dbi.dbspec.transaction(this, null, function () {
-                    self.pending = self.stmts.length;
-                    for (var x = 0; x < self.stmts.length; ++x) {
-                        var stmt = self.stmts[x];
-                        // I have opted to using ? provided by sqlite3,
-                        // and will just emulate that for any other 
-                        // database.
-                        //
-                        //if (stmt.params != undefined) {
-                        //    for (var k in stmt.params) {
-                        //        var re = new RegExp('{' + k + '}', 'g');
-                        //        stmt = stmt.replace(re);
-                        //    }
-                        //}
-                        self.dbi.dbspec.execute(self, stmt.sqlstmt, stmt.params, {
-                            f: function (data, err, rows) {
-                                self.results[data] = {
-                                    err:    err,
-                                    rows:   rows
-                                };
-                                --self.pending;
-                                if (self.pending < 1) {
-                                    self.__docb(self.cb);
-                                }
-                            },
-                            data: self.stmts[x].resultkey
-                        });
-                    }
-
-                    if (self.pending == 0) {
-                        // If we could start another transaction..
-                        // self.dbi.process_pending();
-                        self.__docb(cb);
-                    }
-                });
-            },
-            rollback: function () {                
-                if (this.done) {
-                    return false;
-                }
-                this.dbi.dbspec.rollback(this);
-                this.commited = false;
-                this.done = true;
-                this.dbi.process_pending(true);
-                return false;
-            },
-            commit: function() {      
-                if (this.done) {
-                    return false;
-                }
-                this.dbi.dbspec.commit(this);
-                this.commited = true;
-                this.done = true;
-                this.dbi.process_pending(true);
-                return true;
-            },
-        };
-        return r;
-    };
-
-    return this;
-}
-
-xemo.server.opendatabase = function (db) {
-    switch (db.type) {
-        case 'mysql':
-            var dbi = new xemo.server.DatabaseGeneric(
-                db, 
-                {
-                    locktable: function (self, name, writelock) {
-                        self.__mysql_ttl = self.__mysql_ttl || [];
-                        self.__mysql_ttl.push({
-                            name:         name,
-                            writelock:    (writelock ? true : false)
-                        });
-                    },
-                    execute: function (self, stmt, params, cb) {
-                        try {
-                            self.dbi.instance.query(stmt, params, function (error, results, fields) {
-                                if (error) {
-                                    console.log('SQL error');
-                                    console.log(error);
-                                    console.log(stmt);
-                                    console.log(params);
-                                    /*
-                                        (see below for note about rollback)
-                                    */
-                                    self.rollback();
-                                    throw new Error('SQL statement error.');
-                                }
-                                cb.f(cb.data, error, results);
-                            });
-                            console.log(stmt, params);
-                        } catch (err) {
-                            console.log('SQL error');
-                            console.log(err);
-                            console.log(stmt);
-                            console.log(params);
-                            console.log(cb);
-                            /*
-                                Rollback the transaction, because this can be caught
-                                and the application may reuse the connection for another
-                                transaction and we do not want this accidentally commited.
-                            */
-                            self.rollback();
-                            throw err;
-                        }
-                    },
-                    transaction: function (self, data, cb) {
-                        /*
-                            A nice effect here is we avoid the problem of issuing a second
-                            LOCK TABLES which would be an implicit COMMIT. So our model here
-                            keeps that surprise from happening by grabbing all locks at the
-                            begging and releasing them at the end.
-                        */
-                        /* I am assuming InnoDB which needs this to happen to prevent
-                           potential deadlocks because of the way it and MySQL work.
-
-                           Maybe we could detect the storage engine?
-                        */
-                        self.dbi.instance.query('SET autocommit=0');                        
-                        if (self.__mysql_ttl != undefined && self.__mysql_ttl.length > 0) {
-                            var parts = []
-                            for (var x = 0; x < self.__mysql_ttl.length; ++x) {
-                                parts.push(self.__mysql_ttl[x].name + (self.__mysql_ttl[x].writelock ? ' WRITE' : 'READ'));
-                            }
-                            self.dbi.instance.query('LOCK TABLES ' + parts.join(', '));
-                        }
-                        self.dbi.instance.query('START TRANSACTION');
-                        cb(data);
-                        /* Not really sure if I should even do this. Consdering technicaly
-                           we own this connection unless the caller wants to open their
-                           own.
-                        */
-                        // own and do as they wish.
-                        self.dbi.instance.query('SET autocommit=1');
-                    },
-                    rollback: function (self) {
-                        self.dbi.instance.query('ROLLBACK');
-                    },
-                    commit: function (self) {
-                        self.dbi.instance.query('COMMIT');
-                    }
-                }
-            );
-            dbi.db = db;
-            dbi.instance = mysql.createConnection({
-                host:     db.host,
-                user:     db.user,
-                password: db.pass,
-                database: db.dbname
-            });
-            dbi.instance.connect();
-            return dbi;
-        case 'sqlite3':
-            var dbi = new xemo.server.DatabaseGeneric(
-                db,
-                {
-                    locktable: function (self, name) {
-                        self.__sqlite3_begin = 'BEGIN EXCLUSIVE TRANSACTION';
-                    },
-                    execute: function (self, stmt, params, cb) {
-                        self.dbi.instance.all(stmt, params, function (err, rows) {
-                            cb.f(cb.data, err, rows);
-                        });
-                    },
-                    transaction: function (self, data, cb) {
-                        self.dbi.instance.serialize(function () {
-                            if (self.__sqlite3_begin) {
-                                self.dbi.instance.run(self.__sqlite3_begin);
-                            } else {
-                                self.dbi.instance.run('BEGIN TRANSACTION');
-                            }
-                            cb(data);
-                        });
-                    },
-                    rollback: function (self) {
-                        self.dbi.instance.run('ROLLBACK');
-                    },
-                    commit: function (self) {
-                        self.dbi.instance.run('COMMIT');
-                    }
-
-                }
-            );
-
-            dbi.instance = new sqlite3.Database(db.path);
-            return dbi;
-        default:
-            throw new Error('The database type was not supported.');
-    }
-}
 
 xemo.server.padright = function (v, c, w) {
     v = new String(v);
@@ -323,6 +36,10 @@ xemo.server.datestr = function (y, m, d) {
 
 xemo.server.handlerL3 = function (db, state, req, res, args, user) {
     switch (args.op) {
+        case 'training.get.courses':
+            break;
+        case 'training.get.course':
+            break;
         // verify                   verify.cred
         case 'verify' || 'verify.cred':
             console.log('verify.cred');
@@ -362,7 +79,7 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
             if (!user.canwrite) {
                 xemo.server.dojsonres(res, {
                     code:    'denied',
-                    pid:     -1
+                    pid:     -2
                 });
                 return;
             }
@@ -394,7 +111,6 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                 var rows = t.results.b.rows;
                 var success = false;
                 var bypid = -1;
-                console.log('@@', rows, user.pid);
                 if (rows.length > 0) {
                     bypid = rows[0].bypid;
                     if (rows[0].bypid == user.pid) {
@@ -668,8 +384,6 @@ xemo.server.dojsonerror = function (res, message) {
 }
 
 xemo.server.handlerL2 = function (state, req, res, args, url) {
-    const db = xemo.server.opendatabase(state.db);
-
     if (url != '/interface') {
         if (url == '' || url == '/') {
             url = 'index.html';
@@ -718,39 +432,56 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
         return;
     }
 
-    var t = db.transaction();
-    t.add('SELECT id, username FROM personnel_auth WHERE hash = ?', [args.key], 'a');
-    t.execute(function (reply) {
-        if (reply.results.a.rows.length == 0) {
-            xemo.server.dojsonerror(res, 'The username and password were rejected.');
+    /*
+        This database instance may be from a pool and may need to
+        be closed properly. Since there are so many executions paths
+        that asynchronous it seems to be very easy to leak a connection
+        so we attach it to the server response object, and hopefully
+        it ends up released/closed. Also, we should be catching all
+        exceptions in our domain or anywhere else therefore we can
+        also try to release/close it there as well if needed. 
+    */
+    dbjuggle.opendatabase(state.db, function (err, db) {
+        if (err) {
+            xemo.server.dojsonerror(res, 'There was an error connecting to the database.');
             return;
         }
+        res.dbconn = db;    
 
-        console.log('got id: ' + reply.results.a.rows[0].id);
-        
-        var user = {
-            pid:        reply.results.a.rows[0].id,
-            username:   reply.results.a.rows[0].username
-        };
-
-        console.log('getting user permissions');
         var t = db.transaction();
-        t.add('SELECT canwrite FROM personnel_perm WHERE id = ?', [user.pid], 'a');
+        t.add('SELECT id, username FROM personnel_auth WHERE hash = ?', [args.key], 'a');
         t.execute(function (reply) {
             if (reply.results.a.rows.length == 0) {
-                console.log('user had no permissions set in the database (' + user.pid + ')');
-                xemo.server.dojsonerror(res, 'The user has no permissions set in the database.');
+                xemo.server.dojsonerror(res, 'The username and password were rejected.');
                 return;
             }
 
-            if (reply.results.a.rows[0].canwrite[0] == 1) {
-                user.canwrite = true;
-            } else {
-                user.canwrite = false;
-            }
+            console.log('got id: ' + reply.results.a.rows[0].id);
+            
+            var user = {
+                pid:        reply.results.a.rows[0].id,
+                username:   reply.results.a.rows[0].username
+            };
 
-            console.log('doing operation');
-            xemo.server.handlerL3(db, state, req, res, args, user);
+            console.log('getting user permissions');
+            var t = db.transaction();
+            t.add('SELECT canwrite FROM personnel_perm WHERE id = ?', [user.pid], 'a');
+            t.execute(function (reply) {
+                if (reply.results.a.rows.length == 0) {
+                    console.log('user had no permissions set in the database (' + user.pid + ')');
+                    xemo.server.dojsonerror(res, 'The user has no permissions set in the database.');
+                    return;
+                }
+
+                if (reply.results.a.rows[0].canwrite[0] == 1) {
+                    user.canwrite = true;
+                } else {
+                    user.canwrite = false;
+                }
+
+                console.log('doing operation');
+                xemo.server.handlerL3(db, state, req, res, args, user);
+            });
         });
     });
 }
@@ -780,6 +511,7 @@ xemo.server.handlerL1 = function (state, req, res, data) {
 
     console.log('URL: ' + url);
     console.log(args);
+
 
     xemo.server.handlerL2(state, req, res, args, url);
 }
@@ -824,24 +556,21 @@ xemo.server.handlerL0 = function (state, req, res) {
     by a database for persistence across process restarts.
 */
 xemo.server.NotifyLog = function (state) {
-    this.db = xemo.server.opendatabase(state.db);
-    
     this.cache = [];
 
-    this.hasBeenNotified = function (pid, notifiedfor, system, cb) {
+    this.hasBeenNotified = function (db, pid, notifiedfor, system, cb) {
         /*
             Check our local cache first to reduce latency and load.
         */
         for (var x = 0; x < this.cache.length; ++x) {
             var centry = this.cache[x];
             if (centry.pid == pid && centry.notifiedfor == notifiedfor && centry.system == system) {
-                console.log('@@@@@@@@@@@@@@@');
                 cb(true, null, null);
                 return;
             }
         }
         
-        var t = this.db.transaction();
+        var t = db.transaction();
         
         t.add(' \
                 SELECT id, state FROM notifylog \
@@ -863,14 +592,14 @@ xemo.server.NotifyLog = function (state) {
         });
     };
 
-    this.logNotification = function (pid, notifiedfor, system, state) {
+    this.logNotification = function (db, pid, notifiedfor, system, state) {
         this.cache.push({
             pid:            pid,
             notifiedfor:    notifiedfor,
             system:         system,
             state:          state
         });
-        var t = this.db.transaction();
+        var t = db.transaction();
         t.add(
             'INSERT INTO notifylog (pid, notifiedon, notifiedfor, system, state) VALUES (?, NOW(), FROM_UNIXTIME(?), ?, ?)',
             [pid, notifiedfor, system, state],
@@ -885,11 +614,16 @@ xemo.server.NotifyLog = function (state) {
 }
 
 xemo.server.notifybysms = function (phonenum, message) {    
+    xemo.server.notifybysms.count = xemo.server.notifybysms.count || 1;
+    ++xemo.server.notifybysms.count;
 
-    console.log('NOTIFIED ' + phonenum);
+    // TODO: SAFEGUARD..
+    //if (xemo.server.notifybysms.count > 8) {
+    //    return;
+    //}
 
-
-    return;
+    //console.log('NOTIFIED ' + phonenum);
+    //return;
 
     var client = twilio(
         'AC30481d7178414b654e8e0f7406cecf8f',
@@ -904,33 +638,23 @@ xemo.server.notifybysms = function (phonenum, message) {
         someone could continously get text messages and that would
         be bad.
     */
+
     client.sendMessage({
         to:    '+13345807300', //phonenum,
         from:  '+13345131715',
         body:  message
     });
+
+    client.sendMessage({
+        to:    '+13346572491', //phonenum,
+        from:  '+13345131715',
+        body:  message
+    });
 }
 
-xemo.server.shiftnotify = function (state, group, reschedule) {
+xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
     if (xemo.server.notifylog == undefined) {
         xemo.server.notifylog = new xemo.server.NotifyLog(state);
-    }
-
-    if (!xemo.server.shiftnotify.db) {
-        xemo.server.shiftnotify.db = xemo.server.opendatabase(state.db);
-    }
-
-    var db = xemo.server.shiftnotify.db;
-
-    function tryreschedule() {
-        /*
-            Reschedule ourselves.
-        */
-        if (reschedule) {
-            setTimeout(function () {
-                xemo.server.shiftnotify(state, group, reschedule);
-            }, reschedule);                
-        }        
     }
 
     var t = db.transaction();
@@ -996,7 +720,6 @@ xemo.server.shiftnotify = function (state, group, reschedule) {
         t.execute(function (t) {
             if (t.results.a.err) {
                 console.log('[SHIFTNOTIFY] encountered error fetching tables for ' + group);
-                tryreschedule();
                 return;
             }
 
@@ -1025,10 +748,24 @@ xemo.server.shiftnotify = function (state, group, reschedule) {
                     continue;
                 }                
 
-                /* Ignore shifts more than this amount of time in the future. */
-                //if (cd.getTime() + 1000 * 60 * 60 * 4 < shift.start) {
-                //    continue;
-                //}
+                /*
+                    Compute the notification time for this shift start time,
+                    and also make sure it is in the local time.
+                */
+                var ntime = moment.tz(shift.start, 'America/Chicago');
+                var nte = notifytable[parseInt(ntime.format('HH'))];
+                ntime.date(ntime.date() - 1);
+                ntime.hours(nte[0]);
+
+                //console.log('name', shift.name);
+                //console.log('shift.start', moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm'));
+                //console.log('notification', ntime.format('MMM, Do HH:mm'));
+
+                if (cd < ntime) {
+                    continue;
+                }
+
+                //console.log('NOTIFIED');
 
                 var result = core.getPersonnelIDFromName(pdata, shift.name, shift.start);
 
@@ -1044,43 +781,61 @@ xemo.server.shiftnotify = function (state, group, reschedule) {
                         return function (wasnotified) {
                             if (!wasnotified) {
                                 xemo.server.notifylog.logNotification(
-                                    -1, 
-                                    shift.start.getTime() / 1000, 
-                                    'SCHED_SMS_ERROR_' + group, 
+                                    db,
+                                    -1,
+                                    shift.start.getTime() / 1000,
+                                    'SCHED_SMS_ERROR_' + group,
                                     0
                                 );
 
                                 var errorstr;
                                 switch (result[0]) {
                                     case -1:
-                                        errorstr = 'multiple matches of ' + result[1].join(', ');
+                                        errorstr = 'multiple matches: ' + result[1].join(', ');
+                                        break;
                                     case 0:
                                         errorstr = 'could not be matched with any personnel';
                                         break;
                                 }
+
+                                var lstart = moment.tz(shift.start, 'America/Chicago');
+
+                                if (shift.name == '<nobody>') {
+                                    msg = 'The ' + group.toUpperCase() + ' schedule has a shift with no one assigned on ' +
+                                          lstart.format('MMM, Do HH:mm') + '.';
+                                } else {
+                                    msg = 
+                                        'The name "' + shift.name + '" could not be matched to a personnel.\n\n' +
+                                        'Unable to determine phone number.\n\n' +
+                                        'Error was: "' + errorstr + '"\n\n' + 
+                                        'Shift: ' + lstart.format('MMM, Do HH:mm') + '\n' +
+                                        '\n' +
+                                        'To fix requires schedule edit.';
+                                }
+
                                 xemo.server.notifybysms(
                                     '+13345807300',
-                                    'EMS Schedule Notification System\n' +
-                                    'The name "' + shift.name + '" could not be resolved to a personnel ' +
-                                    'and has not been notified via PHONE SMS.\n' +
-                                    'Error was: ' + errorstr
+                                    'EMS Schedule Admin Notification\n\n' +
+                                    msg
                                 );
                             }
                         };
                     }
 
                     xemo.server.notifylog.hasBeenNotified(
+                        db,
                         -1, shift.start.getTime() / 1000, 'SCHED_SMS_ERROR_' + group,
                         _$a(shift, result)
                     );
                     continue;
-                }
+                }           
 
                 function _$b(shift) {
                     return function (wasnotified) {
                         if (!wasnotified) {
                             console.log('[SCHEDNOTIFY] notifying by SMSPHONE.. ' + shift.name + ':' + shift.pid + ':' + shift.start);
                             xemo.server.notifylog.logNotification(
+                                db,
                                 shift.pid, 
                                 shift.start.getTime() / 1000, 
                                 'SCHED_SMS_' + group, 0
@@ -1097,28 +852,29 @@ xemo.server.shiftnotify = function (state, group, reschedule) {
                                 I expect this to be a very cold path for a long time.
                             */
                             if (deltahours.indexOf('.') > -1) {
-                                deltahours = deltahours.substring(0, deltahours.indexOf('.') + 1);
+                                deltahours = Math.round(deltahours * 10.0) / 10.0; 
                             }
 
                             xemo.server.notifybysms(
                                 shift.smsphone, 
                                 'EMS Schedule Notification System\n' +
                                 '\n' +
-                                shift.name.toUpperCase() + ' is on the schedule in ' +
-                                deltahours + ' hours on ' + lstart.format('MMM, Do') + ' at ' +
-                                lstart.format('HH:mm') + '\n\n' + 
-                                'DOUBLE CHECK SCHEDULE!!\n' 
+                                'For: ' + shift.name.toUpperCase() + '\n' +
+                                '\n' +
+                                'YOU are scheduled ON DUTY for ' + group.toUpperCase() + ' on ' +
+                                lstart.format('MMM, Do') + ' at ' + lstart.format('HH:mm') + '\n'
                             );
                         }
                     };
                 }
 
                 xemo.server.notifylog.hasBeenNotified(
+                    db,
                     shift.pid, shift.start.getTime() / 1000, 'SCHED_SMS_' + group, 
                     _$b(shift)
                 );
             }
-            tryreschedule();
+            cb();
         });
     });
 }
@@ -1133,32 +889,213 @@ xemo.server.fatalRequestError = function (err, res) {
     return;
 }
 
-xemo.server.start = function (state, port) {
-    //xemo.server.shiftnotify(state, 'driver', 5000);
-    var d = domain.create();
+xemo.server.crashLooper = function (delay, args, cb) {
+    var notifydom = domain.create();
 
-    d.on('error', function (err) {
-        if (d.res) {
-            xemo.server.dojsonerror(res, 'Fatal Error During Request: ' + err.stack);
+    function repeat () {
+        xemo.server.crashLooper(delay, args, cb);
+    }
+
+    /*
+        This _should_ catch any errors not caught.
+    */
+
+    notifydom.on('error', function (err) {
+        console.log('NOTIFIER CRASHED');
+        console.log(err);
+        repeat();
+    });      
+
+    setTimeout(function () {
+        notifydom.run(function () {
+            process.nextTick(function () {
+                console.log('crash looper started');
+                cb(delay, args, repeat);
+            });
+        });
+    }, delay);
+}
+
+xemo.server.doNotifier = function (delay, args, repeat) {
+    dbjuggle.opendatabase(args.state.db, function (err, db) {
+        if (err) {
+            repeat();
         }
-        console.log(err.stack);
+        /*
+            The only way to ensure this process is long living
+            is to release these database instances. I may be
+            able create a database pool that reclaims connections
+            that have been inactive for a significant time, but
+            for now let us see if this works good.
+        */
+        xemo.server.notifylog = undefined;
+        xemo.server.shiftnotify(db, args.state, args.group, args.notifytable, function () {
+            repeat();
+        });
     });
+}
+
+xemo.server.oldSystemSync = function (delay, args, repeat) {
+    dbjuggle.opendatabase(args.state.db, function (err, db) {
+        if (err) {
+            console.log('can not open the database');
+            repeat();
+        }
+
+        var nodes = fs.readdir(args.path, function (err, nodes) {
+            if (err) {
+                console.log('unable to read old system path');
+                repeat();
+            }
+
+            args.pending = 0;
+
+            for (var x = 0; x < nodes.length; ++x) {
+                var parts = nodes[x].split('.');
+
+                if (parts[0] == 'data' && parts.length == 4) {
+                    if (parts[1] == 'Driver' || parts[1] == 'Medic') {
+                        args.todo = [];
+                        
+                        var group = parts[1].toLowerCase();
+                        var year = parseInt(parts[2]);
+                        var month = parseInt(parts[3]);
+
+                        ++args.pending;
+                        function __worknode(group, year, month, node) {
+                            fs.readFile(
+                                args.path + '/' + nodes[x], 
+                                { encoding: 'utf-8' }, function (err, data) {
+                                    data = data.split('\n');
+
+                                    for (var x = 0; x < data.length - 1; ++x) {
+                                        var text = data[x].split('\t').join('\n');
+                                        var datestr = year + '/' + month + '/' + (x + 1);
+
+                                        args.todo.push({ 
+                                            group:    'grp_' + group,
+                                            datestr:  datestr,
+                                            text:     text
+                                        });
+                                    }
+
+                                    --args.pending;
+                                    if (args.pending < 1) {
+                                        /*
+                                            When this happens we have pending.
+                                        */
+                                        dbjuggle.opendatabase(args.state.db, function (err, db) {
+                                            var t = db.transaction();
+                                            for (var x = 0; x < args.todo.length; ++x) {
+                                                t.add(
+                                                    ' \
+                                                        INSERT INTO ?? (date, text) VALUES (?, ?) \
+                                                        ON DUPLICATE KEY UPDATE text = ? \
+                                                    ',
+                                                    [
+                                                        args.todo[x].group,
+                                                        args.todo[x].datestr,
+                                                        args.todo[x].text,
+                                                        args.todo[x].text
+                                                    ]
+                                                );
+                                            }
+                                            console.log('synchronized ' + args.todo.length + ' calendar entries from the old system');
+                                            /*
+                                                Just to be safe. Lets clear it.
+                                            */
+                                            args.todo = undefined;
+                                            t.execute();
+                                            repeat();
+                                        });
+                                    }
+                            });
+                        }
+
+                        __worknode(group, year, month, nodes[x]);
+                    }
+
+                    /*
+                        If args.pending < 0 here then we do not
+                        need to do anything.
+                    */
+                    if (args.pending < 0) {
+                        repeat();
+                    }
+                }
+            }
+        });
+    });
+}
+
+xemo.server.start = function (state, port) {
+    xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync);
+
+    /*
+        This is the notification table. For each time
+        specified on the left the time specified on the
+        right is when a notification will happen for that
+        time on the left. The value on the right has two
+        parts. It has a time and a day offset which represents 
+        the numbers of days prior.
+
+        For 01:24 the notification time would be 08:24 the
+        previous day. For 00:45 the notification time would be
+        08:00 the previous day.
+    */
+    var ntbl = {
+        0:  [8, 1],
+        1:  [8, 1],
+        2:  [8, 1],
+        3:  [8, 1],
+        4:  [8, 1],
+        5:  [8, 1],
+        6:  [8, 1],
+        7:  [8, 1],
+        8:  [8, 1],
+        9:  [9, 1],
+        10: [10, 1],
+        11: [11, 1],
+        12: [12, 1],
+        13: [13, 1],
+        14: [14, 1],
+        15: [15, 1],
+        16: [16, 1],
+        17: [17, 1],
+        18: [18, 1],
+        19: [19, 1],
+        20: [20, 1],
+        21: [8, 0],
+        22: [8, 0],
+        23: [8, 0],
+    };
+
+    xemo.server.crashLooper(5000, { state: state, group: 'driver', notifytable: ntbl }, xemo.server.doNotifier);
+    //xemo.server.crashLooper(5000, { state: state, group: 'medic', notifytable: ntbl }, xemo.server.doNotifier);
 
     http.createServer(function (req, res) {
-        d.run(function () {
-            d.res = res;
-            xemo.server.handlerL0(state, req, res);
+        var reqdom = domain.create();
+        reqdom.on('error', function (err) {
+            console.log(err.stack);
+            if (res.dbconn) {
+                res.dbconn.release();
+            }
+        });
+        reqdom.run(function () {
+            process.nextTick(function () {
+                xemo.server.handlerL0(state, req, res);
+            });
         });
     }).listen(7634);
 };
 
 xemo.server.utility = {};
 xemo.server.utility.sqlite3migrate = function () {
-    const sql3 = xemo.server.opendatabase({
+    const sql3 = dbjuggle.opendatabase({
         type:     'sqlite3',
         path:     './data.db' 
     });
-    const mysql = xemo.server.opendatabase({
+    const mysql = dbjuggle.opendatabase({
         type:     'mysql',
         host:     'localhost',
         dbname:   'xemo',
@@ -1353,6 +1290,13 @@ xemo.server.utility.sqlite3migrate = function () {
 //xemo.server.utility.sqlite3migrate();
 
 xemo.server.start({
+    /*
+        The base URL to access the root directory of the server.
+    */
+    baseurl:      'http://kmcg3413.net:7634/',
+    /*
+        The database configuration.
+    */
     db: {
         //type:    'sqlite3',
         //path:    './data.db'

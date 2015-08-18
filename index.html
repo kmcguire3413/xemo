@@ -10,6 +10,7 @@
         <script language="javascript" src="./lib/plugin_reports.js"></script>
         <script language="javascript" src="./lib/plugin_calendar.js"></script>
         <script language="javascript" src="./lib/plugin_admin.js"></script>
+        <script language="javascript" src="./lib/plugin_training.js"></script>
         <div style="position: absolute;" id="frame_ui" class="uiframe">
         </div>       
         <script language="javascript">
@@ -89,6 +90,14 @@
 
                 Version1IF.prototype.showPlugin = function (name) {
                     this.tk.showPlugin(name);
+                }
+
+                Version1IF.prototype.getCurrentPersonnelID = function () {
+                    if (this.getPlugin('Login') == undefined) {
+                        return undefined;
+                    }
+
+                    return this.getPlugin('Login').getPersonnelID();                    
                 }
 
                 Version1IF.prototype.getAuthHash = function () {
