@@ -7,6 +7,8 @@ const moment = require('moment-timezone');
 const twilio = require('twilio');
 const domain = require('domain');
 const dbjuggle = require('dbjuggle');
+const uuid = require('uuid');
+const xps = require('./lib/xps.js');
 
 var xemo = {};
 xemo.server = {};
@@ -36,9 +38,55 @@ xemo.server.datestr = function (y, m, d) {
 
 xemo.server.handlerL3 = function (db, state, req, res, args, user) {
     switch (args.op) {
+        case 'xps.template.compile':
+            var templatename = args.templatename.split('/').join('');
+
+            xps.VFS_fromZip('./templates/' + templatename + '.xps', function (vfs) {
+                var template = new xps.SinglePageTemplate(vfs);
+
+                console.log('args.cfg_ary', args.cfg_ary);
+
+                template.producePages(
+                    args.cfg_ary
+                , function (err) {
+                    if (err) {
+                        xemo.server.dojsonerror(res, 'An error of "' + err + '" occured during XPS template page production.');
+                        return;
+                    }
+
+                    template.compile();
+
+                    var u = uuid.v4();
+                    var upath = './temp/' + u + '.xps';
+
+                    vfs.toZip(upath, function (err) {
+                        if (err) {
+                            xemo.server.dojsonerror(res, 'An error of "' + err + '" occured during XPS ZIP operation.');
+                            return;
+                        }
+
+                        xemo.server.dojsonres(res, upath);
+                        return;
+                    });
+                });
+            });            
+            return;
         case 'training.get.courses':
-            break;
+            var t = db.transaction();
+            t.add('SELECT id, title, credithours, weight, level FROM training_courses', [], 'courses');
+            t.execute(function (t) {
+                xemo.server.dojsonres(res, t.results.courses.rows);
+            });
+            return;
         case 'training.get.course':
+            var t = db.transaction();
+            t.add('SELECT section_id, stack, weight FROM training_courses_sections', [], 'sections');
+            t.execute(function (t) {
+                var rows = t.results.sections.rows;
+                for (var x = 0; x < rows.length; ++x) {
+                    rows[x]
+                }
+            });
             break;
         // verify                   verify.cred
         case 'verify' || 'verify.cred':
@@ -284,7 +332,17 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
             return;
         // gen_document             document.generate
         case 'gen_document' || 'document.generate':
-            break;
+            var u = uuid.v4();
+            var fout = fs.createWriteStream('./temp/' + u + '.' + args.ext);
+            fout.on('open', function () {
+                fout.write(args.data);
+                fout.close();
+                xemo.server.dojsonres(res, '/temp/' + u + '.' + args.ext);
+            });
+            fout.on('error', function () {
+                xemo.server.dojsonerror(res, 'The document was not able to be generated.');
+            });
+            return;
         // get_personnel_names      personnel.names.fromids
         case 'get_personnel_names' || 'personnel.names.fromids':
             var out = {
@@ -405,6 +463,8 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
             case 'gif':  type = 'image/gif'; break;
             case 'html': type = 'text/html'; break;
             case 'png': type = 'image/png'; break;
+            case 'xml': type = 'text/xml'; break;
+            case 'xsl': type = 'text/xsl; charset=utf-8;'; break;
             default:
                 console.log('unknown extension ' + ext);
                 type = 'text/plain';
@@ -535,7 +595,7 @@ xemo.server.handlerL0 = function (state, req, res) {
             });
 
             req.on('end', function () {
-                xemo.server.handlerL1(state, req, res, data);
+                xemo.server.handlerL1(state, req, res, data.join(''));
             });
             return;
         }
@@ -599,6 +659,7 @@ xemo.server.NotifyLog = function (state) {
             system:         system,
             state:          state
         });
+
         var t = db.transaction();
         t.add(
             'INSERT INTO notifylog (pid, notifiedon, notifiedfor, system, state) VALUES (?, NOW(), FROM_UNIXTIME(?), ?, ?)',
@@ -622,7 +683,8 @@ xemo.server.notifybysms = function (phonenum, message) {
     //    return;
     //}
 
-    //console.log('NOTIFIED ' + phonenum);
+    console.log('NOTIFIED ' + phonenum);
+
     //return;
 
     var client = twilio(
@@ -679,7 +741,6 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 
     t.execute(function (reply) {
         var out = [];
-        console.log(reply.results.a);
         var rows = reply.results.a.rows;
         for (var x = 0; x < rows.length; ++x) {
             var row = rows[x];
@@ -746,7 +807,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                 /* Ignore shifts in the past. */
                 if (cd > shift.start) {
                     continue;
-                }                
+                }
 
                 /*
                     Compute the notification time for this shift start time,
@@ -771,6 +832,13 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 
                 if (result[0] == 1) {
                     shift.pid = result[1];
+                    if (pdata[shift.pid].smsphone == null) {
+                        /*
+                            We do not have a SMS phone number for this personnel
+                            so we are not going to worry about notifying them.
+                        */
+                        continue;
+                    }
                     shift.smsphone = pdata[shift.pid].smsphone;
                 } else {
                     /*
@@ -892,13 +960,20 @@ xemo.server.fatalRequestError = function (err, res) {
 xemo.server.crashLooper = function (delay, args, cb) {
     var notifydom = domain.create();
 
-    function repeat () {
-        xemo.server.crashLooper(delay, args, cb);
-    }
-
     /*
-        This _should_ catch any errors not caught.
+        In many cases the repeat() may end up called, but
+        some async paths may fire with an error and thus
+        attempt to repeat. We have to catch them here and
+        deny the repeat if it has already been done.
     */
+    var started = [false];
+
+    function repeat () {
+        if (!started[0]) {
+            started[0] = true;
+            xemo.server.crashLooper(delay, args, cb);
+        }
+    }
 
     notifydom.on('error', function (err) {
         console.log('NOTIFIER CRASHED');
@@ -920,6 +995,7 @@ xemo.server.doNotifier = function (delay, args, repeat) {
     dbjuggle.opendatabase(args.state.db, function (err, db) {
         if (err) {
             repeat();
+            return;
         }
         /*
             The only way to ensure this process is long living
