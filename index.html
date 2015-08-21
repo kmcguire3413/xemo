@@ -1,4 +1,4 @@
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html>
     <head>
         <script type="text/javascript" src="jquery-2.1.4.js"></script>
@@ -36,7 +36,7 @@
                 var __tk = this;
                 this.prefix = frame.id + '__';
 
-                this.baseurl = 'http://kmcg3413.net:7634';
+                this.baseurl = 'https://kmcg3413.net:7634';
 
                 this.urlparameters = getURLParameters();
 
@@ -315,13 +315,13 @@
                 var f = args.pop();
 
                 this.waitShow(msg);
-                try {
+                //try {
                     f.apply(obj, args);
-                } catch (err) {
-                    this.waitError(err);
-                    throw err;
-                    return;
-                }
+                //} catch (err) {
+                //    this.waitError(err);
+                //    throw err;
+                //    return;
+                //}
                 this.waitHide();
             }
 

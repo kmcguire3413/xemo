@@ -13,14 +13,6 @@ const xps = require('./lib/xps.js');
 var xemo = {};
 xemo.server = {};
 
-xemo.server.options = {
-    key: fs.readFileSync('/home/www-data/key.pem'),
-    cert: fs.readFileSync('/home/www-data/cerm.prem'),
-    ciphers: 'ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA256',
-    honorCipherOrder: true,
-    passphrase: 'tty5413413'
-};
-
 xemo.server.padright = function (v, c, w) {
     v = new String(v);
     while (v.length < c) {
@@ -576,8 +568,35 @@ xemo.server.handlerL1 = function (state, req, res, data) {
     xemo.server.handlerL2(state, req, res, args, url);
 }
 
+xemo.server.doredirect = function (res, url) {
+    res.writeHead(302, { 'Location': url });
+    res.end();
+}
+
 xemo.server.handlerL0 = function (state, req, res) {
     try {
+        /*
+            The Xemo system supports a lot of configuration options
+            which can create some long URLs. In order to shorten the
+            URLs and make them easier to read I have added this
+            code here. I hope to link it to the database instead of
+            hard coding it here.
+        */       
+        switch (req.url) {
+            case '/edit':
+                xemo.server.doredirect(res, '/?no_menu=true&oldstyle=true&plug_login_redirect=Calendar&plug_calendar_group=medic');
+                return;
+            case '/sonia':
+                xemo.server.doredirect(res, '/?no_menu=true&oldstyle=true&plug_login_redirect=Calendar&plug_calendar_group=medic&passhash=62d2fd8e33e2b6b6a75d4f5c3bdeade58af155455276e69cb1a1a1aa942eb117e52ae8c5ec802b718413fa82f01836d933431837cbfe9dfadc86710e4a888f58');
+                return;
+            case '/driver':
+                xemo.server.doredirect(res, '/?no_menu=true&oldstyle=true&plug_login_half=true&plug_login_redirect=Calendar&plug_calendar_group=driver');
+                return;
+            case '/medic':
+                xemo.server.doredirect(res, '/?no_menu=true&oldstyle=true&plug_login_half=true&plug_login_redirect=Calendar&plug_calendar_group=medic');
+                return;
+        }
+
         const method = req.method;
         if (method == 'POST') {   
             var data = []; 
@@ -1149,20 +1168,38 @@ xemo.server.start = function (state, port) {
     xemo.server.crashLooper(5000, { state: state, group: 'driver', notifytable: ntbl }, xemo.server.doNotifier);
     //xemo.server.crashLooper(5000, { state: state, group: 'medic', notifytable: ntbl }, xemo.server.doNotifier);
 
-    http.createServer(function (req, res) {
-        var reqdom = domain.create();
+    function handle_http_request(req, res) {
+      var reqdom = domain.create();
         reqdom.on('error', function (err) {
             console.log(err.stack);
             if (res.dbconn) {
                 res.dbconn.release();
             }
         });
+
         reqdom.run(function () {
             process.nextTick(function () {
                 xemo.server.handlerL0(state, req, res);
             });
-        });
+        });        
+    }
+
+    http.createServer(function (req, res) {
+        handle_http_request(req, res);
     }).listen(7634);
+
+    var https_options = {
+        key: fs.readFileSync('/home/kmcguire/www-data-keys/startssl.com/ssl.key.un'),
+        cert: fs.readFileSync('/home/kmcguire/www-data-keys/startssl.com/ssl.cert'),
+        ciphers: 'EECDH+AESGCM:EDH+AESGCM:ECDHE-RSA-AES128-GCM-SHA256:AES256+EECDH:DHE-RSA-AES128-GCM-SHA256:AES256+EDH:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4',
+        honorCipherOrder: true,
+        //passphrase: 'xsjqoxnvye7389sdx7292jsnmzs8203'
+    };
+
+    https.createServer(https_options, function (req, res) {
+        console.log('got https req');
+        handle_http_request(req, res);
+    }).listen(7635);    
 };
 
 xemo.server.utility = {};
@@ -1383,8 +1420,4 @@ xemo.server.start({
         pass:     'OLXk394VBCnxDJFgxk'
     }
 });
-
-
-//var server = https.createServer(options, _handler);
-//server.listen(4372);
 
