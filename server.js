@@ -518,7 +518,19 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
             xemo.server.dojsonerror(res, 'There was an error connecting to the database.');
             return;
         }
-        res.dbconn = db;    
+        res.dbconn = db;
+
+        if (args.op == 'personnel.get.usernames') {
+            var t = db.transaction();
+
+            t.add('SELECT username FROM personnel_auth', [], 'usernames');
+
+            t.execute(function (t) {
+                xemo.server.dojsonres(res, t.results.usernames.rows);
+            });
+
+            return;
+        }        
 
         var t = db.transaction();
         t.add('SELECT id, username FROM personnel_auth WHERE hash = ?', [args.key], 'a');
@@ -661,6 +673,9 @@ xemo.server.NotifyLog = function (state) {
         /*
             Check our local cache first to reduce latency and load.
         */
+
+        console.log('notify checking', pid, notifiedfor);
+
         for (var x = 0; x < this.cache.length; ++x) {
             var centry = this.cache[x];
             if (centry.pid == pid && centry.notifiedfor == notifiedfor && centry.system == system) {
@@ -713,7 +728,7 @@ xemo.server.NotifyLog = function (state) {
     return this;
 }
 
-xemo.server.notifybysms = function (phonenum, message) {    
+xemo.server.notifybysms = function (state, phonenum, message) {    
     xemo.server.notifybysms.count = xemo.server.notifybysms.count || 1;
     ++xemo.server.notifybysms.count;
 
@@ -740,17 +755,22 @@ xemo.server.notifybysms = function (phonenum, message) {
         be bad.
     */
 
-    client.sendMessage({
-        to:    '+13345807300', //phonenum,
-        from:  '+13345131715',
-        body:  message
-    });
+    if (state.sms_notify_fake) {
+        console.log('WOULD HAVE NOTIFIED ' + phonenum);
+        console.log(message);
+    } else {
+        client.sendMessage({
+            to:    '+13345807300', //phonenum,
+            from:  '+13345131715',
+            body:  message
+        });
 
-    client.sendMessage({
-        to:    '+13346572491', //phonenum,
-        from:  '+13345131715',
-        body:  message
-    });
+        client.sendMessage({
+            to:    '+13346572491', //phonenum,
+            from:  '+13345131715',
+            body:  message
+        });
+    }
 }
 
 xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
@@ -921,6 +941,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                                 }
 
                                 xemo.server.notifybysms(
+                                    state,
                                     '+13345807300',
                                     'EMS Schedule Admin Notification\n\n' +
                                     msg
@@ -963,6 +984,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                             }
 
                             xemo.server.notifybysms(
+                                state,
                                 shift.smsphone, 
                                 'EMS Schedule Notification System\n' +
                                 '\n' +
@@ -1385,6 +1407,9 @@ xemo.server.utility.sqlite3migrate = function () {
 };
 
 //xemo.server.utility.sqlite3migrate();
+
+//console.log('ebryant', CryptoJS.SHA512('ebryant:techman'));
+//console.log('jprestridge', CryptoJS.SHA512('jprestridge:cashmoney'));
 
 xemo.server.start(require(process.argv[2]));
 
