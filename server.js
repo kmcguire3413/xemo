@@ -147,6 +147,15 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                 'b'
             );
 
+            t.add(
+                'SELECT text FROM ?? WHERE date = ?',
+                [
+                    'grp_' + args.grp,
+                    args.year + '/' + args.month + '/' + args.day
+                ],
+                'c'
+            );
+
             t.execute(function (t) {
                 var rows = t.results.b.rows;
                 var success = false;
@@ -157,9 +166,20 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                         success = true;
                     }
                 }
+
+                var freshtext;
+
+                if (t.results.c.rows.length < 1) {
+                    freshtext = '<error>';
+                    success = false;
+                } else {
+                    freshtext = t.results.c.rows[0].text;
+                }
+
                 xemo.server.dojsonres(res, {
-                    code:    success ? 'accepted' : 'denied',
-                    pid:     bypid
+                    code:       success ? 'accepted' : 'denied',
+                    pid:        bypid,
+                    freshtext:  freshtext
                 });
                 return;
             });
@@ -1123,49 +1143,15 @@ xemo.server.oldSystemSync = function (delay, args, repeat) {
     });
 }
 
-xemo.server.start = function (state, port) {
-    xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync);
+xemo.server.start = function (state) {
 
-    /*
-        This is the notification table. For each time
-        specified on the left the time specified on the
-        right is when a notification will happen for that
-        time on the left. The value on the right has two
-        parts. It has a time and a day offset which represents 
-        the numbers of days prior.
+    if (state.sync_with_old) {
+        xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync);
+    }
 
-        For 01:24 the notification time would be 08:24 the
-        previous day. For 00:45 the notification time would be
-        08:00 the previous day.
-    */
-    var ntbl = {
-        0:  [8, 1],
-        1:  [8, 1],
-        2:  [8, 1],
-        3:  [8, 1],
-        4:  [8, 1],
-        5:  [8, 1],
-        6:  [8, 1],
-        7:  [8, 1],
-        8:  [8, 1],
-        9:  [9, 1],
-        10: [10, 1],
-        11: [11, 1],
-        12: [12, 1],
-        13: [13, 1],
-        14: [14, 1],
-        15: [15, 1],
-        16: [16, 1],
-        17: [17, 1],
-        18: [18, 1],
-        19: [19, 1],
-        20: [20, 1],
-        21: [8, 0],
-        22: [8, 0],
-        23: [8, 0],
-    };
-
-    xemo.server.crashLooper(5000, { state: state, group: 'driver', notifytable: ntbl }, xemo.server.doNotifier);
+    for (var group in state.notify_for_groups) {
+        xemo.server.crashLooper(5000, { state: state, group: group, notifytable: state.notify_for_groups[group] }, xemo.server.doNotifier);
+    }
     //xemo.server.crashLooper(5000, { state: state, group: 'medic', notifytable: ntbl }, xemo.server.doNotifier);
 
     function handle_http_request(req, res) {
@@ -1186,20 +1172,18 @@ xemo.server.start = function (state, port) {
 
     http.createServer(function (req, res) {
         handle_http_request(req, res);
-    }).listen(7634);
+    }).listen(state.http_port);
 
     var https_options = {
-        key: fs.readFileSync('/home/kmcguire/www-data-keys/startssl.com/ssl.key.un'),
-        cert: fs.readFileSync('/home/kmcguire/www-data-keys/startssl.com/ssl.cert'),
-        ciphers: 'EECDH+AESGCM:EDH+AESGCM:ECDHE-RSA-AES128-GCM-SHA256:AES256+EECDH:DHE-RSA-AES128-GCM-SHA256:AES256+EDH:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4',
+        key: state.https_key,
+        cert: state.https_cert,
+        ciphers: state.https_ciphers,
         honorCipherOrder: true,
-        //passphrase: 'xsjqoxnvye7389sdx7292jsnmzs8203'
     };
 
     https.createServer(https_options, function (req, res) {
-        console.log('got https req');
         handle_http_request(req, res);
-    }).listen(7635);    
+    }).listen(state.https_port);    
 };
 
 xemo.server.utility = {};
@@ -1213,7 +1197,7 @@ xemo.server.utility.sqlite3migrate = function () {
         host:     'localhost',
         dbname:   'xemo',
         user:     'xemo',
-        pass:     'OLXk394VBCnxDJFgxk'
+        pass:     'password'
     });
 
     var t = sql3.transaction();
@@ -1402,22 +1386,5 @@ xemo.server.utility.sqlite3migrate = function () {
 
 //xemo.server.utility.sqlite3migrate();
 
-xemo.server.start({
-    /*
-        The base URL to access the root directory of the server.
-    */
-    baseurl:      'http://kmcg3413.net:7634/',
-    /*
-        The database configuration.
-    */
-    db: {
-        //type:    'sqlite3',
-        //path:    './data.db'
-        type:     'mysql',
-        host:     'localhost',
-        dbname:   'xemo',
-        user:     'xemo',
-        pass:     'OLXk394VBCnxDJFgxk'
-    }
-});
+xemo.server.start(require(process.argv[2]));
 
