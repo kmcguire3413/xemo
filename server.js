@@ -10,22 +10,6 @@ var dbjuggle = require('dbjuggle');
 var uuid = require('uuid');
 var xps = require('./lib/xps.js');
 
-/**  
-    This is the Xemo namespace. All components reside
-    under this namespace.
-*/
-const https = require('https');
-const http = require('http');
-const fs = require('fs');
-const crypto = require('crypto');
-const core = require('./lib/core.js');
-const moment = require('moment-timezone');
-const twilio = require('twilio');
-const domain = require('domain');
-const dbjuggle = require('dbjuggle');
-const uuid = require('uuid');
-const xps = require('./lib/xps.js');
-
 var xemo = {};
 
 /**
@@ -602,7 +586,7 @@ xemo.server.handlerL1 = function (state, req, res, data) {
             var pair = _args[x].split('=');
             var key = pair[0];
             var value = pair[1];
-            value = decodeURI(value);
+            value = decodeURIComponent(value);
             args[key] = value;
         }
         url = url.substring(0, url.indexOf('?'));
@@ -616,6 +600,22 @@ xemo.server.handlerL1 = function (state, req, res, data) {
 	    but for now I am doing it this way to get it working.
 	*/
 	console.log('checking for alertcall');
+	if (url == '/twilio_sms_request') {
+	    console.log('twilio_sms_request', data);
+	    var pairs = data.split('&');
+	    var eargs = {};
+	    for (var x = 0; x < pairs.length; ++x) {
+		var parts = pairs[x].split('=');
+		var k = parts[0];
+		var v = parts[1];
+		eargs[decodeURIComponent(k)] = decodeURIComponent(v);
+	    }
+	    console.log('eargs', eargs);
+	    res.writeHead(200, { 'Content-Type': 'text/plain' });
+	    res.end('');
+	    xemo.server.alert_req_reply(state, eargs);
+	    return;
+	}
 	if (url == '/alertcall.xml') {
 	    res.writeHead(200, { 'Content-Type': 'text/xml' });
 	    res.end('<?xml version="1.0" encoding="UTF-8"?>' +
@@ -823,8 +823,8 @@ xemo.server.notifybysms = function (state, phonenum, message) {
 
 xemo.server.alert_for_missing_shift_personnel = function (state, shift) {
     xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13345807300');
-    xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13342350915');
-    xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13346572491');
+    //xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13342350915');
+    //xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13346572491');
 };
 
 xemo.server.alert_for_missing_shift_personnel_single = function (state, shift, phonenum) {
@@ -850,6 +850,46 @@ xemo.server.alert_for_missing_shift_personnel_single = function (state, shift, p
         url: state.baseurl + 'alertcall.xml'
     }, function(err, responseData) {
         console.log('[alert-call] response: ' + responseData.from); 
+    });
+};
+
+xemo.server.alert_req_reply = function (state, args) {
+    /*
+	First determine who is sending this message.
+    */
+    function reply(msg) {
+	xemo.server.notifybysms(state, args.From, msg); 
+    }
+
+    var t = state.db_instance.transaction();
+    t.add(
+	'SELECT id AS pid, smsphone, firstname, middlename, lastname, surname FROM personnel WHERE smsphone = ?',
+	[args.From],
+	'r'
+    );
+
+    console.log('got SMS message from ' + args.From);
+
+    t.execute(function (t) {
+	var rows = t.results.r.rows;
+
+	if (rows.length > 1) {
+	    reply('Multiple personnel have been found matching your number. Please report this.');
+	    return;
+	}
+	if (!rows || rows.length == 0) {
+	    reply('No personnel on record can be associated with this number.');
+	}
+
+	if (state.is_onduty_sms_rx[rows[0].pid] != state.is_onduty_sms_tx[rows[0].pid]) {
+           	state.is_onduty_sms_rx[rows[0].pid] = state.is_onduty_sms_tx[rows[0].pid];
+		reply('Your response has been recieved, and the system will consider you on-duty for the specified shift time.');
+		
+	} else {
+		state.is_onduty_sms_rx[rows[0].pid] = state.is_onduty_sms_tx[rows[0].pid] + 1;
+		reply('Your response has been recieved, and you will be accounted for the next shift.');
+	}
+	
     });
 };
 
@@ -916,7 +956,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
         });
 
         var t = db.transaction();
-        t.add('SELECT id, firstname, middlename, lastname, surname, dateadded, smsphone FROM personnel', [], 'a');
+        t.add('SELECT id, firstname, middlename, lastname, surname, dateadded, smsphone, duty_alert FROM personnel', [], 'a');
         t.execute(function (t) {
             if (t.results.a.err) {
                 console.log('[SHIFTNOTIFY] encountered error fetching tables for ' + group);
@@ -934,19 +974,20 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                     lastname:      row.lastname,
                     surname:       row.surname,
                     dateadded:     row.dateadded,
-                    smsphone:      row.smsphone
+                    smsphone:      row.smsphone,
+		    duty_alert:	   row.duty_alert,
                 };
             }
 
             var cd = new Date();
 
+	    /*
+		The shifts will be processed. Each will have a personnel ID assigned if possible. The
+		shift will be checked for a need to notify the personnel. The shift will be checked for
+		the need for a response from the personnel that they are on-duty for the shift.
+	    */
             for (var ndx = 0; ndx < refined.length; ++ndx) {
                 var shift = refined[ndx];
-
-                /* Ignore shifts in the past. */
-                if (cd > shift.start) {
-                    continue;
-                }
 
                 var result = core.getPersonnelIDFromName(pdata, shift.name, shift.start);
 
@@ -960,6 +1001,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                         continue;
                     }
                     shift.smsphone = pdata[shift.pid].smsphone;
+		    shift.duty_alert = pdata[shift.pid].duty_alert[0] == 0 ? false : true;
                 } else {
                     /*
                         We could not resolve the personnel therefore we will make sure that we
@@ -1063,7 +1105,6 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                     and also make sure it is in the local time.
                 */
                 var ntime = moment.tz(shift.start, 'America/Chicago');
-		var shift_start_ltime = ntime.getTime();
                 var nte = notifytable[parseInt(ntime.format('HH'))];
                 ntime.date(ntime.date() - 1);
                 ntime.hours(nte[0]);
@@ -1077,10 +1118,16 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 		    cache only needs to live for this amount of time. I am currently using ten
 		    minutes. I doubt that the server will ever recieve a restart which will cause
 		    this to become a problem.
+
+		    This also can trigger about 120 minutes after the shift time. This limitation is
+		    done to prevent excessive CPU consumption by this routine running in excess.
 		*/
-		if (cd > shift_start_ltime - (1000 * 60 * 10) && shift.pid == 2 && cd < shift_start_ltime) {
+		if (cd > shift.start - (1000 * 60 * 10) && shift.duty_alert && cd.getTime() < (shift.start.getTime() + 1000 * 60 * 120)) {
 		    var kr = 'R:' + new String(shift.start.getTime()) + ':' + shift.pid;
 		    var ka = 'A:' + new String(shift.start.getTime()) + ':' + shift.pid;
+
+		    console.log('hot zone for on-duty shift', shift.pid);
+		    
 		    /*
 			Use a local short lived cache in order to prevent duplicate
 			message from being sent constantly. It is a tri-state structure.
@@ -1088,34 +1135,57 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 		    if (state.is_onduty_sms_rx[shift.pid] == undefined) {
 			state.is_onduty_sms_rx[shift.pid] = 0;
 			state.is_onduty_sms_tx[shift.pid] = 0;
+			console.log('created shift.pid entry in is_onduty_sms[rx/tx]');
 		    }
 
-		    if (cd > shift_start_ltime) {
+		    if (cd > shift.start) {
+			console.log('thinking about alert');
 			if (state.is_onduty_sms_rx[shift.pid] != state.is_onduty_sms_tx[shift.pid]) {
+			    console.log('trying the alert');
 			    /*
 				Do alert procedure only once.
 			    */ 
 			    if (state.is_onduty_cache_sent[ka] == undefined) {
+				console.log('doing the alert');
 				state.is_onduty_cache_sent[ka] = true;
-				xemo.server.alert_for_missing_shift_personnel(shift);
+				xemo.server.alert_for_missing_shift_personnel(state, shift);
 			    }
 			}
 		    }
 
-		    if (cd < shift_start_ltime) {
+		    if (cd < shift.start) {
 			if (state.is_onduty_cache_sent[kr] == undefined) {
 			    state.is_onduty_cache_sent[kr] = state.is_onduty_sms_rx;
-			    state.is_onduty_sms_tx++;
-			    xemo.server.notifybysms(
-			        shift.smsphone,
-			        'EMS Schedule Notification System\n' +
-			        '\n' +
-			        'For: ' + shift.name.toUpperCase() + '\n' +
-			        '\n' +
-			        'Please reply with anything to register yourself as on-duty in 10 minutes.'
-			    );	
+			    state.is_onduty_sms_tx[shift.pid]++;
+			    var delta = Math.round((shift.start.getTime() - cd.getTime()) / 1000 / 60);
+			    if (state.is_onduty_sms_tx[shift.pid] == state.is_onduty_sms_rx[shift.pid]) {
+				xemo.server.notifybysms(
+				    state,
+				    shift.smsphone,
+				    'EMS Schedule Notifcation System\n\n' +
+				    'It looks like you pre-approved yourself for the shift in ' + delta + ' minutes. Everything is OK.'
+				);
+			    } else {
+				xemo.server.notifybysms(
+				    state,
+				    shift.smsphone,
+				    'EMS Schedule Notification System\n' +
+				    '\n' +
+				    'For: ' + shift.name.toUpperCase() + '\n' +
+				    '\n' +
+				    'Please reply with anything to confirm that someone will be on-duty in ' + delta + ' minutes for your shift.\n\n' +
+				    'A failure to reply will result in an ALERT page being transmitted.'
+				);	
+			    }
 			}
 		    }			
+		}
+
+		/*
+		    Do not worry about notifying for shifts in the past.
+		*/
+		if (cd > shift.time) {
+		    continue;
 		}
 
 		/*
@@ -1342,6 +1412,20 @@ xemo.server.oldSystemSync = function (delay, args, repeat) {
 }
 
 xemo.server.start = function (state) {
+    /*
+	TODO: port everything to use a single DB connection
+	TODO: have this happen before startup continues
+
+	This makes it easy for everything to be able to access
+	a valid DB connection using the state structure. At the
+	moment the major systems create their own. I hope to port
+	them all over to using a single connection. This also need
+	to halt the startup until it completes.
+    */
+    dbjuggle.opendatabase(state.db, function (err, db) {
+	state.db_instance = db;
+	db.acquire();
+    });
     /*
 	These are important structures for the service
 	that helps to make sure that a personnel is on
