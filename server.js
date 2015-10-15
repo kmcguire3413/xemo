@@ -1,16 +1,25 @@
-const https = require('https');
-const http = require('http');
-const fs = require('fs');
-const crypto = require('crypto');
-const core = require('./lib/core.js'); 
-const moment = require('moment-timezone');
-const twilio = require('twilio');
-const domain = require('domain');
-const dbjuggle = require('dbjuggle');
-const uuid = require('uuid');
-const xps = require('./lib/xps.js');
+var https = require('https');
+var http = require('http');
+var fs = require('fs');
+var crypto = require('crypto');
+var core = require('./lib/core.js'); 
+var moment = require('moment-timezone');
+var twilio = require('twilio');
+var domain = require('domain');
+var dbjuggle = require('dbjuggle');
+var uuid = require('uuid');
+var xps = require('./lib/xps.js');
 
+/**  
+    This is the Xemo namespace. All components reside
+    under this namespace.
+*/
 var xemo = {};
+
+/**
+    This contains all the server specific components
+    for Xemo.
+*/
 xemo.server = {};
 
 xemo.server.padright = function (v, c, w) {
@@ -19,14 +28,14 @@ xemo.server.padright = function (v, c, w) {
         v = w + v;
     }
     return v;
-}
+};
 
 xemo.server.datestr = function (y, m, d) {
     y = xemo.server.padright(y, 4, '0');
     m = xemo.server.padright(m, 2, '0');
     d = xemo.server.padright(d, 2, '0');
     return y + '-' + m + '-' + d;
-}
+};
 
 xemo.server.handlerL3 = function (db, state, req, res, args, user) {
     switch (args.op) {
@@ -476,6 +485,7 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
             case 'html': type = 'text/html'; break;
             case 'png': type = 'image/png'; break;
             case 'xml': type = 'text/xml'; break;
+	    case 'mp3': type = 'audio/mpeg'; break;
             case 'xsl': type = 'text/xsl; charset=utf-8;'; break;
             default:
                 console.log('unknown extension ' + ext);
@@ -587,6 +597,27 @@ xemo.server.handlerL1 = function (state, req, res, data) {
     }
 
     if (data != null) {
+	/*
+	    Twilio does not send POST data in JSON format. We need
+	    to specially handle it here. I desire to actuall break
+	    out the parameters and feed them into args, and continue,
+	    but for now I am doing it this way to get it working.
+	*/
+	console.log('checking for alertcall');
+	if (url == '/alertcall.xml') {
+	    res.writeHead(200, { 'Content-Type': 'text/xml' });
+	    res.end('<?xml version="1.0" encoding="UTF-8"?>' +
+		'<Response>' +
+		    //'<Say voice="woman">' +
+			//'The Eclectic E M S personnel scheduled on the current shift has not responded to our automated' +
+			//'attempt to contact them and verify that they are ready for the shift. This message is to indicate' +
+			//'that there may not be a personnel who may be required for the shift the operate. You should contact' +
+			//'the facility or the personnel and verify that they are on duty.' +
+		    //'</Say>' +
+		    '<Play loop="1">' + state.baseurl + 'missingdriver.mp3</Play>' +
+		'</Response>');
+	    return;
+	}
         var eargs = JSON.parse(data);
         for (var k in eargs) {
             args[k] = eargs[k];
@@ -629,7 +660,7 @@ xemo.server.handlerL0 = function (state, req, res) {
                 return;
         }
 
-        const method = req.method;
+        var method = req.method;
         if (method == 'POST') {   
             var data = []; 
             var datatotalsize = 0;
@@ -660,11 +691,13 @@ xemo.server.handlerL0 = function (state, req, res) {
     }
 }
 
-/*
-    This contains the logic used to keep a log of who
-    has been notified. It is powered locally by a in
-    memory cache of recent notifications, and then backed
-    by a database for persistence across process restarts.
+/**
+ *   This contains the logic used to keep a log of who
+ *   has been notified. It is powered locally by a in
+ *   memory cache of recent notifications, and then backed
+ *   by a database for persistence across process restarts.
+ *
+ *   @param {SERVER_STATE} state - server state and configuration
 */
 xemo.server.NotifyLog = function (state) {
     this.cache = [];
@@ -673,8 +706,6 @@ xemo.server.NotifyLog = function (state) {
         /*
             Check our local cache first to reduce latency and load.
         */
-
-        console.log('notify checking', pid, notifiedfor);
 
         for (var x = 0; x < this.cache.length; ++x) {
             var centry = this.cache[x];
@@ -728,6 +759,10 @@ xemo.server.NotifyLog = function (state) {
     return this;
 }
 
+xemo.server.notifybyvoice = function (state, phonenum, message) {
+    
+};
+
 xemo.server.notifybysms = function (state, phonenum, message) {    
     xemo.server.notifybysms.count = xemo.server.notifybysms.count || 1;
     ++xemo.server.notifybysms.count;
@@ -741,10 +776,7 @@ xemo.server.notifybysms = function (state, phonenum, message) {
 
     //return;
 
-    var client = twilio(
-        'AC30481d7178414b654e8e0f7406cecf8f',
-        '4f34e8ec17500b189fe370056a2c167d'
-    );
+    var client = twilio(state.twilio_auth[0], state.twilio_auth[1]);
 
     /*
         We can pass a callback as the second parameter, but I opted
@@ -760,18 +792,50 @@ xemo.server.notifybysms = function (state, phonenum, message) {
         console.log(message);
     } else {
         client.sendMessage({
-            to:    '+13345807300', //phonenum,
-            from:  '+13345131715',
+            to:    state.twilio_debug_number,
+            from:  state.twilio_from_number,
             body:  message
         });
 
         client.sendMessage({
-            to:    '+13346572491', //phonenum,
-            from:  '+13345131715',
+            to:    phonenum,
+            from:  state.twilio_from_number,
             body:  message
         });
     }
 }
+
+xemo.server.alert_for_missing_shift_personnel = function (state, shift) {
+    xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13345807300');
+    xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13342350915');
+    xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13346572491');
+};
+
+xemo.server.alert_for_missing_shift_personnel_single = function (state, shift, phonenum) {
+    xemo.server.notifybysms(
+	state,
+	phonenum,
+	'EMS Schedule ALERT PAGE\n' +
+	'\n' +
+	'ALERT FOR: ' + shift.name.toUpperCase() + '\n' +
+	'\n' +
+	'ACTION REQUIRED ASAP\n' + 
+	'\n' + 
+	'This personnel was flagged to respond. They are on-duty. ' +
+	'They have FAILED to respond. The shift may be uncovered.'
+    );
+
+    var client = twilio(state.twilio_auth[0], state.twilio_auth[1]);
+
+    client.makeCall({
+        to: phonenum, 
+	from: state.twilio_from_number, /* Twilio from number. */
+	/* This produces a TwiML document in XML for call instructions. */
+        url: state.baseurl + 'alertcall.xml'
+    }, function(err, responseData) {
+        console.log('[alert-call] response: ' + responseData.from); 
+    });
+};
 
 xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
     if (xemo.server.notifylog == undefined) {
@@ -868,25 +932,6 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                     continue;
                 }
 
-                /*
-                    Compute the notification time for this shift start time,
-                    and also make sure it is in the local time.
-                */
-                var ntime = moment.tz(shift.start, 'America/Chicago');
-                var nte = notifytable[parseInt(ntime.format('HH'))];
-                ntime.date(ntime.date() - 1);
-                ntime.hours(nte[0]);
-
-                //console.log('name', shift.name);
-                //console.log('shift.start', moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm'));
-                //console.log('notification', ntime.format('MMM, Do HH:mm'));
-
-                if (cd < ntime) {
-                    continue;
-                }
-
-                //console.log('NOTIFIED');
-
                 var result = core.getPersonnelIDFromName(pdata, shift.name, shift.start);
 
                 if (result[0] == 1) {
@@ -942,7 +987,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 
                                 xemo.server.notifybysms(
                                     state,
-                                    '+13345807300',
+                                    state.twilio_admin_number,
                                     'EMS Schedule Admin Notification\n\n' +
                                     msg
                                 );
@@ -980,11 +1025,11 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                                 I expect this to be a very cold path for a long time.
                             */
                             if (deltahours.indexOf('.') > -1) {
-                                deltahours = Math.round(deltahours * 10.0) / 10.0; 
+				deltahours = Math.round(deltahours * 10.0) / 10.0; 
                             }
 
                             xemo.server.notifybysms(
-                                state,
+				state,
                                 shift.smsphone, 
                                 'EMS Schedule Notification System\n' +
                                 '\n' +
@@ -997,6 +1042,77 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                     };
                 }
 
+                /*
+                    Compute the notification time for this shift start time,
+                    and also make sure it is in the local time.
+                */
+                var ntime = moment.tz(shift.start, 'America/Chicago');
+		var shift_start_ltime = ntime.getTime();
+                var nte = notifytable[parseInt(ntime.format('HH'))];
+                ntime.date(ntime.date() - 1);
+                ntime.hours(nte[0]);
+
+		/*
+		    This provides the ability to validate that a personnel is on duty at
+		    the shift time. To do this we need to send a message a short time before
+		    the shift start, and then we will wait for a SMS reply from this personnel.
+
+		    It will _only_ send a message inside a certain window or time, therefore, the
+		    cache only needs to live for this amount of time. I am currently using ten
+		    minutes. I doubt that the server will ever recieve a restart which will cause
+		    this to become a problem.
+		*/
+		if (cd > shift_start_ltime - (1000 * 60 * 10) && shift.pid == 2 && cd < shift_start_ltime) {
+		    var kr = 'R:' + new String(shift.start.getTime()) + ':' + shift.pid;
+		    var ka = 'A:' + new String(shift.start.getTime()) + ':' + shift.pid;
+		    /*
+			Use a local short lived cache in order to prevent duplicate
+			message from being sent constantly. It is a tri-state structure.
+		    */
+		    if (state.is_onduty_sms_rx[shift.pid] == undefined) {
+			state.is_onduty_sms_rx[shift.pid] = 0;
+			state.is_onduty_sms_tx[shift.pid] = 0;
+		    }
+
+		    if (cd > shift_start_ltime) {
+			if (state.is_onduty_sms_rx[shift.pid] != state.is_onduty_sms_tx[shift.pid]) {
+			    /*
+				Do alert procedure only once.
+			    */ 
+			    if (state.is_onduty_cache_sent[ka] == undefined) {
+				state.is_onduty_cache_sent[ka] = true;
+				xemo.server.alert_for_missing_shift_personnel(shift);
+			    }
+			}
+		    }
+
+		    if (cd < shift_start_ltime) {
+			if (state.is_onduty_cache_sent[kr] == undefined) {
+			    state.is_onduty_cache_sent[kr] = state.is_onduty_sms_rx;
+			    state.is_onduty_sms_tx++;
+			    xemo.server.notifybysms(
+			        shift.smsphone,
+			        'EMS Schedule Notification System\n' +
+			        '\n' +
+			        'For: ' + shift.name.toUpperCase() + '\n' +
+			        '\n' +
+			        'Please reply with anything to register yourself as on-duty in 10 minutes.'
+			    );	
+			}
+		    }			
+		}
+
+		/*
+		    Kick out anything that is before the _specified_ notification time. This
+		    is different from the actual shift start time and the current time.
+		*/
+                if (cd < ntime) {
+                    continue;
+                }
+
+		/*
+		    Here we are actually going to do the notification.
+		*/
                 xemo.server.notifylog.hasBeenNotified(
                     db,
                     shift.pid, shift.start.getTime() / 1000, 'SCHED_SMS_' + group, 
@@ -1166,15 +1282,23 @@ xemo.server.oldSystemSync = function (delay, args, repeat) {
 }
 
 xemo.server.start = function (state) {
+    /*
+	These are important structures for the service
+	that helps to make sure that a personnel is on
+	duty.
+    */
+    state.is_onduty_sms_rx = {};
+    state.is_onduty_sms_tx = {};
+    state.is_onduty_cache_sent = {};
 
     if (state.sync_with_old) {
-        xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync);
+	xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync);
     }
-
     for (var group in state.notify_for_groups) {
         xemo.server.crashLooper(5000, { state: state, group: group, notifytable: state.notify_for_groups[group] }, xemo.server.doNotifier);
     }
-    //xemo.server.crashLooper(5000, { state: state, group: 'medic', notifytable: ntbl }, xemo.server.doNotifier);
+
+    //xemo.server.alert_for_missing_shift_personnel(state, { name: 'TEST' });
 
     function handle_http_request(req, res) {
       var reqdom = domain.create();
@@ -1207,206 +1331,6 @@ xemo.server.start = function (state) {
         handle_http_request(req, res);
     }).listen(state.https_port);    
 };
-
-xemo.server.utility = {};
-xemo.server.utility.sqlite3migrate = function () {
-    const sql3 = dbjuggle.opendatabase({
-        type:     'sqlite3',
-        path:     './data.db' 
-    });
-    const mysql = dbjuggle.opendatabase({
-        type:     'mysql',
-        host:     'localhost',
-        dbname:   'xemo',
-        user:     'xemo',
-        pass:     'password'
-    });
-
-    var t = sql3.transaction();
-    //t.add('SELECT id, description, division FROM attributes', [], 'attributes');
-
-    t.add('SELECT personnel_id, crew_id, crew_function_id FROM crew', [], 'crew');
-    t.add('SELECT id, description FROM crew_function', [], 'crew_function');
-    t.add('SELECT date, text FROM grp_driver', [], 'grp_driver');
-    t.add('SELECT date, text FROM grp_medic', [], 'grp_medic');
-    t.add('SELECT date, lockeduntil, bypid FROM grpdaylock_driver', [], 'grpdaylock_driver');
-    t.add('SELECT date, lockeduntil, bypid FROM grpdaylock_medic', [], 'grpdaylock_medic');
-    t.add('SELECT id, name FROM idisposition', [], 'idisposition');
-    t.add('SELECT id, datetime, location, crew, disposition FROM ilog', [], 'ilog');
-    t.add('SELECT sysid, sysname, config, desc, payperiodref FROM paysystem_spec', [], 'paysystem_spec');
-    t.add('SELECT id, firstname, middlename, lastname, surname, dateadded, smsphone FROM personnel', [], 'personnel');
-    t.add('SELECT id, username, hash FROM personnel_auth', [], 'personnel_auth');
-    t.add('SELECT pid, payperiodref FROM personnel_payperiodref', [], 'personnel_payperiodref');
-    t.add('SELECT pid, sysid, start, end FROM personnel_paysystem', [], 'personnel_paysystem');
-    t.add('SELECT id, canwrite FROM personnel_perm_rw', [], 'personnel_perm_rw');
-    t.execute(function (a) {
-        console.log('starting migration to mysql');
-        var b = mysql.transaction();
-        // INT = 4
-        // BIGINT = 8     TINYINT=1   SMALLINT=2
-        // 
-
-        /*
-        b.add('DROP TABLE crew');
-        b.add('DROP TABLE crew_function');
-        b.add('DROP TABLE grpdaylock_driver');
-        b.add('DROP TABLE grpdaylock_medic');
-        b.add('DROP TABLE idisposition');
-        b.add('DROP TABLE ilog');
-        b.add('DROP TABLE personnel');
-        b.add('DROP TABLE personnel_auth');
-        b.add('DROP TABLE personnel_paysystem');
-        b.add('DROP TABLE personnel_perm');
-        */
-        b.add('DROP TABLE grp_driver');
-        b.add('DROP TABLE grp_medic');        
-        b.add('DROP TABLE personnel_payperiodref');
-        b.add('DROP TABLE paysystem_spec');
-        
-        /*
-        b.add('CREATE TABLE crew (personnel_id BIGINT NOT NULL, crew_id VARCHAR(64) NOT NULL, crew_function_id INT NOT NULL)');
-        b.add('CREATE TABLE crew_function (id INT PRIMARY KEY, description VARCHAR(1024) NOT NULL)');
-        b.add('CREATE TABLE grpdaylock_driver (date DATE PRIMARY KEY, lockeduntil DATETIME NOT NULL, bypid BIGINT NOT NULL)');
-        b.add('CREATE TABLE grpdaylock_medic (date DATE PRIMARY KEY, lockeduntil DATETIME NOT NULL, bypid BIGINT NOT NULL)');
-        b.add('CREATE TABLE idisposition (id INT PRIMARY KEY, name VARCHAR(128) NOT NULL)');
-        b.add('CREATE TABLE ilog (id BIGINT PRIMARY KEY, datetime DATETIME NOT NULL, location VARCHAR(256) NOT NULL, crew VARCHAR(64), disposition INT NOT NULL)');
-        b.add('CREATE TABLE personnel (id BIGINT PRIMARY KEY, firstname VARCHAR(60), middlename VARCHAR(60), lastname VARCHAR(60), surname VARCHAR(60), dateadded DATETIME NOT NULL, smsphone VARCHAR(30))');
-        b.add('CREATE TABLE personnel_auth (id BIGINT PRIMARY KEY, username VARCHAR(128) NOT NULL, hash VARCHAR(256) NOT NULL)');
-        b.add('CREATE TABLE personnel_paysystem (pid BIGINT, sysid INT NOT NULL, start INT NOT NULL, end INT)');
-        b.add('CREATE TABLE personnel_perm (id BIGINT PRIMARY KEY, canwrite BIT(1) NOT NULL)');
-        */
-        b.add('CREATE TABLE grp_driver (date DATE PRIMARY KEY, text VARCHAR(1024) NOT NULL)');
-        b.add('CREATE TABLE grp_medic (date DATE PRIMARY KEY, text VARCHAR(1024) NOT NULL)');        
-        b.add('CREATE TABLE personnel_payperiodref (pid BIGINT PRIMARY KEY, payperiodref DATETIME NOT NULL)');
-        b.add('CREATE TABLE paysystem_spec (sysid INT PRIMARY KEY, sysname VARCHAR(128) NOT NULL, config VARCHAR(4096), xdesc VARCHAR(1024) NOT NULL)');
-
-        function h1(table, rows, cols, cb, q) {
-            if (!q) {
-                q = [];
-                for (var x = 0; x < cols.length; ++x) {
-                    q.push('?');
-                }
-            }
-            q = q.join(', ');
-            for (var x = 0; x < rows.length; ++x) {
-                var row = rows[x];
-                var params = cb(row);
-                params.splice(0, 0, table);
-                b.add('INSERT INTO ?? (' + cols.join(', ') + ') VALUES (' + q + ')', params);
-            }
-        }
-
-        h1(
-            'paysystem_spec', a.results.paysystem_spec.rows,
-            ['sysid', 'sysname', 'config', 'xdesc'],
-            function (row) {
-                return [row.sysid, row.sysname, row.config, row.desc];
-            }
-        );
-
-
-        h1(
-            'personnel_payperiodref', a.results.personnel_payperiodref.rows,
-            ['pid', 'payperiodref'],
-            function (row) {
-                return [row.pid, row.payperiodref];
-            },
-            ['?', 'FROM_UNIXTIME(?)']
-        );
-
-        /*
-        h1(
-            'personnel_perm', a.results.personnel_perm_rw.rows,
-            ['id', 'canwrite'],
-            function (row) {
-                return [row.id, row.canwrite];
-            }
-        );
-
-        h1(
-            'personnel_paysystem', a.results.personnel_paysystem.rows,
-            ['pid', 'sysid', 'start', 'end'],
-            function (row) {
-                return [row.pid, row.sysid, row.start, row.end];
-            }
-        );
-
-        h1(
-            'personnel_auth', a.results.personnel_auth.rows,
-            ['id', 'username', 'hash'],
-            function (row) {
-                return [row.id, row.username, row.hash];
-            }
-        );
-
-        h1(
-            'personnel', a.results.personnel.rows,
-            ['id', 'firstname', 'middlename', 'lastname', 'surname', 'dateadded', 'smsphone'],
-            function (row) {
-                return [row.id, row.firstname, row.middlename, row.lastname, row.surname, row.dateadded, row.smsphone];
-            }
-        );
-
-        h1(
-            'ilog', a.results.ilog.rows,
-            ['id', 'datetime', 'location', 'crew', 'disposition'],
-            function (row) {
-                return [row.id, row.datetime, row.location, row.crew, row.disposition];
-            },
-            ['?', 'FROM_UNIXTIME(?)', '?', '?', '?']
-        );
-
-        h1(
-            'idisposition', a.results.idisposition.rows,
-            ['id', 'name'],
-            function (row) {
-                return [row.id, row.name];
-            }
-        );  
-
-        h1(
-            'crew', a.results.crew.rows, 
-            ['personnel_id', 'crew_id', 'crew_function_id'],
-            function (row) {
-                return [row.personnel_id, row.crew_id, row.crew_function_id];
-            }
-        );
-
-        h1(
-            'crew_function', a.results.crew_function.rows,
-            ['id', 'description'],
-            function (row) {
-                return [row.id, row.description];
-            }
-        );
-        */
-
-        h1(
-            'grp_driver', a.results.grp_driver.rows,
-            ['date', 'text'],
-            function (row) {
-                return [(row.date - 1721059.5), row.text.split('\x06').join('\n')];
-            },
-            ['FROM_DAYS(?)', '?']
-        );
-
-        h1(
-            'grp_medic', a.results.grp_medic.rows,
-            ['date', 'text'],
-            function (row) {
-                return [(row.date - 1721059.5), row.text.split('\x06').join('\n')];
-            },
-            ['FROM_DAYS(?)', '?']
-        );
-
-        b.execute(function (b) {
-            console.log('migration finished');
-            b.commit();
-        });        
-    });  
-};
-
-//xemo.server.utility.sqlite3migrate();
 
 //console.log('ebryant', CryptoJS.SHA512('ebryant:techman'));
 //console.log('jprestridge', CryptoJS.SHA512('jprestridge:cashmoney'));
