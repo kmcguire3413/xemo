@@ -14,6 +14,18 @@ var xps = require('./lib/xps.js');
     This is the Xemo namespace. All components reside
     under this namespace.
 */
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const crypto = require('crypto');
+const core = require('./lib/core.js');
+const moment = require('moment-timezone');
+const twilio = require('twilio');
+const domain = require('domain');
+const dbjuggle = require('dbjuggle');
+const uuid = require('uuid');
+const xps = require('./lib/xps.js');
+
 var xemo = {};
 
 /**
@@ -70,7 +82,7 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                         return;
                     });
                 });
-            });            
+            });
             return;
         case 'training.get.courses':
             var t = db.transaction();
@@ -97,7 +109,7 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                 username:  user.username,
                 id:        user.id
             });
-            return;            
+            return;
         // commitPersonnel          personnel.commit
         case 'commitPersonnel' || 'personnel.commit':
             break;
@@ -141,7 +153,7 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
             ', [
                 'grpdaylock_' + args.grp,
                  args.year + '/' + args.month + '/' + args.day,
-                 parseInt(args.delta), 
+                 parseInt(args.delta),
                  user.pid,
                  user.pid,
                  parseInt(args.delta),
@@ -200,7 +212,7 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
         case 'daywrite' || 'calendar.day.write':
             var t = db.transaction();
             t.add(
-                'SELECT date, lockeduntil, bypid FROM ?? WHERE date = ?', 
+                'SELECT date, lockeduntil, bypid FROM ?? WHERE date = ?',
                 [
                     'grpdaylock_' + args.grp,
                     args.year + '/' + args.month + '/' + args.day
@@ -241,7 +253,7 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                 'SELECT YEAR(date) AS year, MONTH(date) AS month, DAYOFMONTH(date) AS day, text FROM ?? WHERE date >= DATE(?) and date < DATE(?) ORDER BY date',
                 [
                     'grp_' + args.grp,
-                    xemo.server.datestr(args.from_year, args.from_month, args.from_day), 
+                    xemo.server.datestr(args.from_year, args.from_month, args.from_day),
                     xemo.server.datestr(args.to_year, args.to_month, args.to_day)
                 ],
                 'a'
@@ -305,7 +317,7 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                     systems:     {},
                     error:       {}
                 };
-                
+
                 if (!args.ids && !args.all) {
                     xemo.server.dojsonres(res, out);
                     return;
@@ -457,7 +469,7 @@ xemo.server.dojsonres = function (res, data) {
 xemo.server.dojsonerror = function (res, message) {
     var data = {
         code:   'error',
-        error:  message 
+        error:  message
     };
     xemo.server.doresponse(res, 'text/html', JSON.stringify(data));
 }
@@ -492,7 +504,7 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
                 type = 'text/plain';
                 break;
 
-        }        
+        }
 
         var fstream = fs.createReadStream('./' + url);
 
@@ -521,7 +533,7 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
         so we attach it to the server response object, and hopefully
         it ends up released/closed. Also, we should be catching all
         exceptions in our domain or anywhere else therefore we can
-        also try to release/close it there as well if needed. 
+        also try to release/close it there as well if needed.
     */
     dbjuggle.opendatabase(state.db, function (err, db) {
         if (err) {
@@ -540,7 +552,7 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
             });
 
             return;
-        }        
+        }
 
         var t = db.transaction();
         t.add('SELECT id, username FROM personnel_auth WHERE hash = ?', [args.key], 'a');
@@ -551,7 +563,7 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
             }
 
             console.log('got id: ' + reply.results.a.rows[0].id);
-            
+
             var user = {
                 pid:        reply.results.a.rows[0].id,
                 username:   reply.results.a.rows[0].username
@@ -644,7 +656,7 @@ xemo.server.handlerL0 = function (state, req, res) {
             URLs and make them easier to read I have added this
             code here. I hope to link it to the database instead of
             hard coding it here.
-        */       
+        */
         switch (req.url) {
             case '/edit':
                 xemo.server.doredirect(res, '/?no_menu=true&oldstyle=true&plug_login_redirect=Calendar&plug_calendar_group=medic');
@@ -714,16 +726,16 @@ xemo.server.NotifyLog = function (state) {
                 return;
             }
         }
-        
+
         var t = db.transaction();
-        
+
         t.add(' \
                 SELECT id, state FROM notifylog \
                 WHERE pid = ? AND \
                 UNIX_TIMESTAMP(notifiedfor) = ? AND \
                 system = ? \
-            ', 
-            [pid, notifiedfor, system], 
+            ',
+            [pid, notifiedfor, system],
             'notifylog'
         );
 
@@ -752,16 +764,12 @@ xemo.server.NotifyLog = function (state) {
             'notifylog'
         );
         t.execute(function (t) {
-            console.log(t.results.notifylog.err);
+            console.log('err:' + t.results.notifylog.err);
         });
     };
 
     return this;
 }
-
-xemo.server.notifybyvoice = function (state, phonenum, message) {
-    
-};
 
 xemo.server.notifybysms = function (state, phonenum, message) {    
     xemo.server.notifybysms.count = xemo.server.notifybysms.count || 1;
@@ -791,6 +799,8 @@ xemo.server.notifybysms = function (state, phonenum, message) {
         console.log('WOULD HAVE NOTIFIED ' + phonenum);
         console.log(message);
     } else {
+        console.log('@@@' + phonenum);
+
         client.sendMessage({
             to:    state.twilio_debug_number,
             from:  state.twilio_from_number,
@@ -802,6 +812,12 @@ xemo.server.notifybysms = function (state, phonenum, message) {
             from:  state.twilio_from_number,
             body:  message
         });
+
+        //client.sendMessage({
+        //    to:    '+13346572491', //phonenum,
+        //    from:  '+13345131715',
+        //    body:  message
+        //});
     }
 }
 
@@ -868,9 +884,9 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
         for (var x = 0; x < rows.length; ++x) {
             var row = rows[x];
             out.push({
-                year: parseInt(row.year), 
-                month: parseInt(row.month), 
-                day: parseInt(row.day), 
+                year: parseInt(row.year),
+                month: parseInt(row.month),
+                day: parseInt(row.day),
                 text: row.text
             });
         }
@@ -884,7 +900,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
             var lines = entry.text.split('\n');
             core.textcalendar.parseLinesIntoShifts(lines, function (name, start, end) {
                 var shift = core.textcalendar.makeRoughShift(entry.year, entry.month, entry.day, name, start, end);
-                refined.push(shift);                
+                refined.push(shift);
             });
         }
 
@@ -976,10 +992,10 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                                     msg = 'The ' + group.toUpperCase() + ' schedule has a shift with no one assigned on ' +
                                           lstart.format('MMM, Do HH:mm') + '.';
                                 } else {
-                                    msg = 
+                                    msg =
                                         'The name "' + shift.name + '" could not be matched to a personnel.\n\n' +
                                         'Unable to determine phone number.\n\n' +
-                                        'Error was: "' + errorstr + '"\n\n' + 
+                                        'Error was: "' + errorstr + '"\n\n' +
                                         'Shift: ' + lstart.format('MMM, Do HH:mm') + '\n' +
                                         '\n' +
                                         'To fix requires schedule edit.';
@@ -1001,7 +1017,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                         _$a(shift, result)
                     );
                     continue;
-                }           
+                }
 
                 function _$b(shift) {
                     return function (wasnotified) {
@@ -1009,8 +1025,8 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                             console.log('[SCHEDNOTIFY] notifying by SMSPHONE.. ' + shift.name + ':' + shift.pid + ':' + shift.start);
                             xemo.server.notifylog.logNotification(
                                 db,
-                                shift.pid, 
-                                shift.start.getTime() / 1000, 
+                                shift.pid,
+                                shift.start.getTime() / 1000,
                                 'SCHED_SMS_' + group, 0
                             );
 
@@ -1115,7 +1131,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 		*/
                 xemo.server.notifylog.hasBeenNotified(
                     db,
-                    shift.pid, shift.start.getTime() / 1000, 'SCHED_SMS_' + group, 
+                    shift.pid, shift.start.getTime() / 1000, 'SCHED_SMS_' + group,
                     _$b(shift)
                 );
             }
@@ -1156,7 +1172,7 @@ xemo.server.crashLooper = function (delay, args, cb) {
         console.log('NOTIFIER CRASHED');
         console.log(err);
         repeat();
-    });      
+    });
 
     setTimeout(function () {
         notifydom.run(function () {
@@ -1174,6 +1190,50 @@ xemo.server.doNotifier = function (delay, args, repeat) {
             repeat();
             return;
         }
+        var trans = db.transaction();
+
+        trans.add('SELECT id, firstname, middlename, lastname, smsphone FROM personnel', [], 'a');
+        trans.execute(function (t) {
+            var rows = t.results.a.rows;
+
+            for (var x = 0; x < rows.length; ++x) {
+                var row = rows[x];
+
+                var name = row.firstname + ' ' + row.middlename + ' ' + row.lastname;
+                var pid = row.id;
+                var smsphone = row.smsphone;
+
+                function __b(pid, name, smsphone) {
+                    return function (wasnotified) {
+                        if (!wasnotified) {
+                            console.log('doing-initial-sms:' + smsphone + ':' + name + ':' + pid);
+                            xemo.server.notifylog.logNotification(
+                                db,
+                                pid,
+                                0,
+                                'SCHED_SMS_TEST', 0
+                            );
+                            xemo.server.notifybysms(
+                                args.state,
+                                smsphone,
+                                name.toUpperCase() + ',\nIf you have recieved this message please notify Sonia so that she knows that the EMS notification system has the correct number.'
+                            );
+                        }
+                    }
+                }
+
+                if (smsphone == null) {
+                    continue;
+                }
+
+                xemo.server.notifylog.hasBeenNotified(
+                    db,
+                    pid, 0, 'SCHED_SMS_TEST',
+                    __b(pid, name, smsphone)
+                );
+            }
+        });
+
         /*
             The only way to ensure this process is long living
             is to release these database instances. I may be
@@ -1209,7 +1269,7 @@ xemo.server.oldSystemSync = function (delay, args, repeat) {
                 if (parts[0] == 'data' && parts.length == 4) {
                     if (parts[1] == 'Driver' || parts[1] == 'Medic') {
                         args.todo = [];
-                        
+
                         var group = parts[1].toLowerCase();
                         var year = parseInt(parts[2]);
                         var month = parseInt(parts[3]);
@@ -1217,7 +1277,7 @@ xemo.server.oldSystemSync = function (delay, args, repeat) {
                         ++args.pending;
                         function __worknode(group, year, month, node) {
                             fs.readFile(
-                                args.path + '/' + nodes[x], 
+                                args.path + '/' + nodes[x],
                                 { encoding: 'utf-8' }, function (err, data) {
                                     data = data.split('\n');
 
@@ -1225,7 +1285,7 @@ xemo.server.oldSystemSync = function (delay, args, repeat) {
                                         var text = data[x].split('\t').join('\n');
                                         var datestr = year + '/' + month + '/' + (x + 1);
 
-                                        args.todo.push({ 
+                                        args.todo.push({
                                             group:    'grp_' + group,
                                             datestr:  datestr,
                                             text:     text
@@ -1313,7 +1373,7 @@ xemo.server.start = function (state) {
             process.nextTick(function () {
                 xemo.server.handlerL0(state, req, res);
             });
-        });        
+        });
     }
 
     http.createServer(function (req, res) {
@@ -1329,11 +1389,10 @@ xemo.server.start = function (state) {
 
     https.createServer(https_options, function (req, res) {
         handle_http_request(req, res);
-    }).listen(state.https_port);    
+    }).listen(state.https_port);
 };
 
 //console.log('ebryant', CryptoJS.SHA512('ebryant:techman'));
 //console.log('jprestridge', CryptoJS.SHA512('jprestridge:cashmoney'));
 
 xemo.server.start(require(process.argv[2]));
-
