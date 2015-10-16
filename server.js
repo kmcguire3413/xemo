@@ -900,8 +900,15 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 
     var t = db.transaction();
 
+    /*
+	For shift notify we only need to go forward, but for shift
+	alert we need to go back one day on the calendar. This is
+	because the calendar days may not be split at zero hundred
+	and therefore some of the current day could be on the end
+	of the previous calendar day.
+    */
     var sd = new Date();
-    sd = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate());
+    sd = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() - 1);
     var ed = new Date();
     ed = new Date(ed.getFullYear(), ed.getMonth(), ed.getDate());
     ed.setDate(ed.getDate() + 2);
