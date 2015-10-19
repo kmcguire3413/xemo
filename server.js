@@ -616,6 +616,15 @@ xemo.server.handlerL1 = function (state, req, res, data) {
 	    xemo.server.alert_req_reply(state, eargs);
 	    return;
 	}
+	if (url == '/emptyshiftcall.xml') {	
+	    res.writeHead(200, { 'Content-Type': 'text/xml' });
+	    res.end('<?xml version="1.0" encoding="UTF-8"?>' +
+		'<Response>' +
+		    '<Say voice="woman">This is the Eclectic E M S notification system. The schedule has no known driver.</Say>' +
+		'</Response>'
+	    );
+	    return;
+	}
 	if (url == '/alertcall.xml') {
 	    res.writeHead(200, { 'Content-Type': 'text/xml' });
 	    res.end('<?xml version="1.0" encoding="UTF-8"?>' +
@@ -627,7 +636,8 @@ xemo.server.handlerL1 = function (state, req, res, data) {
 			//'the facility or the personnel and verify that they are on duty.' +
 		    //'</Say>' +
 		    '<Play loop="1">' + state.baseurl + 'missingdriver.mp3</Play>' +
-		'</Response>');
+		'</Response>'
+	    );
 	    return;
 	}
         var eargs = JSON.parse(data);
@@ -822,9 +832,41 @@ xemo.server.notifybysms = function (state, phonenum, message) {
 }
 
 xemo.server.alert_for_missing_shift_personnel = function (state, shift) {
-    xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13345807300');
-    //xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13342350915');
-    //xemo.server.alert_for_missing_shift_personnel_single(state, shift, '+13346572491');
+    for (var x = 0; x < state.alert_numbers.length; ++x) {
+        xemo.server.alert_for_missing_shift_personnel_single(state, shift, state.alert_numbers[x]);
+    }
+};
+
+xemo.server.alert_for_no_shift_personnel = function (state, shift) {
+    for (var x = 0; x < state.alert_numbers.length; ++x) {
+	xemo.server.alert_for_no_shift_personnel_single(state, shift, state.alert_numbers[x]);
+    }    
+};
+
+
+xemo.server.alert_for_no_shift_personnel_single = function (state, shift, phonenum) {
+    xemo.server.notifybysms(
+	state,
+	phonenum,
+	'EMS Schedule ALERT PAGE\n' +
+	'\n' +
+	'ALERT FOR: ' + shift.name.toUpperCase() + '\n' +
+	'\n' +
+	'ACTION REQUIRED ASAP\n' + 
+	'\n' + 
+	'It appears that there is no personnel scheduled on duty.'
+    );
+
+    var client = twilio(state.twilio_auth[0], state.twilio_auth[1]);
+
+    client.makeCall({
+        to: phonenum, 
+	from: state.twilio_from_number, /* Twilio from number. */
+	/* This produces a TwiML document in XML for call instructions. */
+        url: state.baseurl + 'emptyshiftcall.xml'
+    }, function(err, responseData) {
+        console.log('[empty-shift-call] response: ' + responseData.from); 
+    });
 };
 
 xemo.server.alert_for_missing_shift_personnel_single = function (state, shift, phonenum) {
@@ -1010,6 +1052,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                     shift.smsphone = pdata[shift.pid].smsphone;
 		    shift.duty_alert = pdata[shift.pid].duty_alert[0] == 0 ? false : true;
                 } else {
+		    shift.pid = -100;
                     /*
                         We could not resolve the personnel therefore we will make sure that we
                         let someone know that there was a problem by sending them a notification.
@@ -1065,7 +1108,6 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                         -1, shift.start.getTime() / 1000, 'SCHED_SMS_ERROR_' + group,
                         _$a(shift, result)
                     );
-                    continue;
                 }
 
                 function _$b(shift) {
@@ -1173,15 +1215,19 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 				    'It looks like you pre-approved yourself for the shift in ' + delta + ' minutes. Everything is OK.'
 				);
 			    } else {
-				xemo.server.notifybysms(
-				    state,
-				    shift.smsphone,
-				    'EMS Schedule Notification System\n' +
-				    '\n' +
-				    'For: ' + shift.name.toUpperCase() + '\n' +
-				    '\n' +
-				    'Please reply with anything to confirm that someone will be on-duty in ' + delta + ' minutes for your shift.\n\n' +
-				    'A failure to reply will result in an ALERT page being transmitted.'
+				if (shift.pid < 0) {
+				    xemo.server.alert_for_no_shift_personnel(state, shift);			
+				} else {
+				    xemo.server.notifybysms(
+				        state,
+					shift.smsphone,
+					'EMS Schedule Notification System\n' +
+					'\n' +
+					'For: ' + shift.name.toUpperCase() + '\n' +
+					'\n' +
+					'Please reply with anything to confirm that someone will be on-duty in ' + delta + ' minutes for your shift.\n\n' +
+					'A failure to reply will result in an ALERT page being transmitted.'
+				    );
 				);	
 			    }
 			}
@@ -1191,7 +1237,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 		/*
 		    Do not worry about notifying for shifts in the past.
 		*/
-		if (cd > shift.time) {
+		if (cd > shift.start) {
 		    continue;
 		}
 
@@ -1202,6 +1248,13 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                 if (cd < ntime) {
                     continue;
                 }
+
+		/*
+		    Anything below 0 has special meaning that does not concern the code below.
+		*/
+		if (shift.pid < 0) {
+		    continue;
+		}
 
 		/*
 		    Here we are actually going to do the notification.
