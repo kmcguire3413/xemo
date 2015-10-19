@@ -1228,7 +1228,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 					'Please reply with anything to confirm that someone will be on-duty in ' + delta + ' minutes for your shift.\n\n' +
 					'A failure to reply will result in an ALERT page being transmitted.'
 				    );
-				);	
+				}	
 			    }
 			}
 		    }			
