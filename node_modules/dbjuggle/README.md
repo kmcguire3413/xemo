@@ -51,6 +51,17 @@ is very new and may contain bugs.
 			reference count if an error occures.
 		*/
 		trans.execute(function (trans_ref_copy) {
+			/*
+			    The `trans_ref_copy` is exactly the same as `trans`
+                            in the outer scope. It is just passed as an argument
+	                    for convience.
+
+			    trans === trans_ref_copy
+			*/
+
+			/* A shortcut to the results.. */
+			var results = trans_ref_copy.results;
+	
 			if (trans_ref_copy.results.keya.err || trans_ref_copy.results.whatever.err) {
 				/* The transactions encountered an error. */
 				return;
@@ -92,9 +103,9 @@ is very new and may contain bugs.
 				you called commit, or a commit happens if you provided no callback.
 			*/
 			if (something) {
-				trans_ref_copy.commit();
+				trans_ref_copy.commit(function () { console.log('done'); });
 			} else {
-				trans_ref_copy.rollback();
+				trans_ref_copy.rollback(function () { console.log('done'); });
 			}
 
 			/*

@@ -481,7 +481,7 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
             case 'html': type = 'text/html'; break;
             case 'png': type = 'image/png'; break;
             case 'xml': type = 'text/xml'; break;
-	    case 'mp3': type = 'audio/mpeg'; break;
+	        case 'mp3': type = 'audio/mpeg'; break;
             case 'xsl': type = 'text/xsl; charset=utf-8;'; break;
             default:
                 console.log('unknown extension ' + ext);
@@ -499,7 +499,7 @@ xemo.server.handlerL2 = function (state, req, res, args, url) {
 
         fstream.on('error', function (err) {
             console.log('err: ' + err);
-            res.writeHead(400, { 'Content-Type': type });
+            res.writeHead(400, { 'Content-Type': 'text/plain' });
             res.end(err);
         });
 
@@ -811,12 +811,16 @@ xemo.server.notifybysms = function (state, phonenum, message) {
     } else {
         console.log('@@@' + phonenum);
 
-        client.sendMessage({
-            to:    state.twilio_debug_number,
-            from:  state.twilio_from_number,
-            body:  message
-        });
-
+        for (var x = 0; x < state.twilio_debug_number.length; ++x) {
+            if (state.twilio_debug_number[x] != phonenum) {
+                client.sendMessage({
+                    to:    state.twilio_debug_number[x],
+                    from:  state.twilio_from_number,
+                    body:  message
+                });
+            }
+        }
+        
         client.sendMessage({
             to:    phonenum,
             from:  state.twilio_from_number,
@@ -839,7 +843,7 @@ xemo.server.alert_for_missing_shift_personnel = function (state, shift) {
 
 xemo.server.alert_for_no_shift_personnel = function (state, shift) {
     for (var x = 0; x < state.alert_numbers.length; ++x) {
-	xemo.server.alert_for_no_shift_personnel_single(state, shift, state.alert_numbers[x]);
+	   xemo.server.alert_for_no_shift_personnel_single(state, shift, state.alert_numbers[x]);
     }    
 };
 
@@ -871,16 +875,16 @@ xemo.server.alert_for_no_shift_personnel_single = function (state, shift, phonen
 
 xemo.server.alert_for_missing_shift_personnel_single = function (state, shift, phonenum) {
     xemo.server.notifybysms(
-	state,
-	phonenum,
-	'EMS Schedule ALERT PAGE\n' +
-	'\n' +
-	'ALERT FOR: ' + shift.name.toUpperCase() + '\n' +
-	'\n' +
-	'ACTION REQUIRED ASAP\n' + 
-	'\n' + 
-	'This personnel was flagged to respond. They are on-duty. ' +
-	'They have FAILED to respond. The shift may be uncovered.'
+    	state,
+    	phonenum,
+    	'EMS Schedule ALERT PAGE\n' +
+    	'\n' +
+    	'ALERT FOR: ' + shift.name.toUpperCase() + '\n' +
+    	'\n' +
+    	'ACTION REQUIRED ASAP\n' + 
+    	'\n' + 
+    	'This personnel was flagged to respond. They are on-duty. ' +
+    	'They have FAILED to respond. The shift may be uncovered.'
     );
 
     var client = twilio(state.twilio_auth[0], state.twilio_auth[1]);
@@ -900,14 +904,15 @@ xemo.server.alert_req_reply = function (state, args) {
 	First determine who is sending this message.
     */
     function reply(msg) {
-	xemo.server.notifybysms(state, args.From, msg); 
+	   xemo.server.notifybysms(state, args.From, msg); 
     }
 
     var t = state.db_instance.transaction();
+    
     t.add(
-	'SELECT id AS pid, smsphone, firstname, middlename, lastname, surname FROM personnel WHERE smsphone = ?',
-	[args.From],
-	'r'
+	   'SELECT id AS pid, smsphone, firstname, middlename, lastname, surname FROM personnel WHERE smsphone = ?',
+	   [args.From],
+	   'r'
     );
 
     console.log('got SMS message from ' + args.From);
@@ -919,12 +924,13 @@ xemo.server.alert_req_reply = function (state, args) {
 	    reply('Multiple personnel have been found matching your number. Please report this.');
 	    return;
 	}
+	
 	if (!rows || rows.length == 0) {
 	    reply('No personnel on record can be associated with this number.');
 	}
 
 	if (state.is_onduty_sms_rx[rows[0].pid] != state.is_onduty_sms_tx[rows[0].pid]) {
-           	state.is_onduty_sms_rx[rows[0].pid] = state.is_onduty_sms_tx[rows[0].pid];
+        state.is_onduty_sms_rx[rows[0].pid] = state.is_onduty_sms_tx[rows[0].pid];
 		reply('Your response has been recieved, and the system will consider you on-duty for the specified shift time.');
 		
 	} else {
@@ -935,12 +941,12 @@ xemo.server.alert_req_reply = function (state, args) {
     });
 };
 
-xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
+xemo.server.shiftnotify = function (state, group, notifytable, cb) {
     if (xemo.server.notifylog == undefined) {
         xemo.server.notifylog = new xemo.server.NotifyLog(state);
     }
 
-    var t = db.transaction();
+    var t = state.db_instance.transaction();
 
     /*
 	For shift notify we only need to go forward, but for shift
@@ -1004,7 +1010,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
             }, 'America/Chicago'));
         });
 
-        var t = db.transaction();
+        var t = state.db_instance.transaction();
         t.add('SELECT id, firstname, middlename, lastname, surname, dateadded, smsphone, duty_alert FROM personnel', [], 'a');
         t.execute(function (t) {
             if (t.results.a.err) {
@@ -1061,7 +1067,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                         return function (wasnotified) {
                             if (!wasnotified) {
                                 xemo.server.notifylog.logNotification(
-                                    db,
+                                    state.db_instance,
                                     -1,
                                     shift.start.getTime() / 1000,
                                     'SCHED_SMS_ERROR_' + group,
@@ -1104,7 +1110,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                     }
 
                     xemo.server.notifylog.hasBeenNotified(
-                        db,
+                        state.db_instance,
                         -1, shift.start.getTime() / 1000, 'SCHED_SMS_ERROR_' + group,
                         _$a(shift, result)
                     );
@@ -1115,7 +1121,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                         if (!wasnotified) {
                             console.log('[SCHEDNOTIFY] notifying by SMSPHONE.. ' + shift.name + ':' + shift.pid + ':' + shift.start);
                             xemo.server.notifylog.logNotification(
-                                db,
+                                state.db_instance,
                                 shift.pid,
                                 shift.start.getTime() / 1000,
                                 'SCHED_SMS_' + group, 0
@@ -1132,11 +1138,11 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
                                 I expect this to be a very cold path for a long time.
                             */
                             if (deltahours.indexOf('.') > -1) {
-				deltahours = Math.round(deltahours * 10.0) / 10.0; 
+				                deltahours = Math.round(deltahours * 10.0) / 10.0; 
                             }
 
                             xemo.server.notifybysms(
-				state,
+				                state,
                                 shift.smsphone, 
                                 'EMS Schedule Notification System\n' +
                                 '\n' +
@@ -1171,69 +1177,67 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 		    This also can trigger about 120 minutes after the shift time. This limitation is
 		    done to prevent excessive CPU consumption by this routine running in excess.
 		*/
+		/*
 		if (cd > shift.start - (1000 * 60 * 10) && shift.duty_alert && cd.getTime() < (shift.start.getTime() + 1000 * 60 * 120)) {
 		    var kr = 'R:' + new String(shift.start.getTime()) + ':' + shift.pid;
 		    var ka = 'A:' + new String(shift.start.getTime()) + ':' + shift.pid;
 
 		    console.log('hot zone for on-duty shift', shift.pid);
 		    
-		    /*
-			Use a local short lived cache in order to prevent duplicate
-			message from being sent constantly. It is a tri-state structure.
-		    */
+			// Use a local short lived cache in order to prevent duplicate
+			// message from being sent constantly. It is a tri-state structure.
 		    if (state.is_onduty_sms_rx[shift.pid] == undefined) {
-			state.is_onduty_sms_rx[shift.pid] = 0;
-			state.is_onduty_sms_tx[shift.pid] = 0;
-			console.log('created shift.pid entry in is_onduty_sms[rx/tx]');
+    			state.is_onduty_sms_rx[shift.pid] = 0;
+    			state.is_onduty_sms_tx[shift.pid] = 0;
+    			console.log('created shift.pid entry in is_onduty_sms[rx/tx]');
 		    }
 
 		    if (cd > shift.start) {
-			console.log('thinking about alert');
-			if (state.is_onduty_sms_rx[shift.pid] != state.is_onduty_sms_tx[shift.pid]) {
-			    console.log('trying the alert');
-			    /*
-				Do alert procedure only once.
-			    */ 
-			    if (state.is_onduty_cache_sent[ka] == undefined) {
-				console.log('doing the alert');
-				state.is_onduty_cache_sent[ka] = true;
-				xemo.server.alert_for_missing_shift_personnel(state, shift);
-			    }
-			}
+    			console.log('thinking about alert ', shift.start);
+    			if (state.is_onduty_sms_rx[shift.pid] != state.is_onduty_sms_tx[shift.pid]) {
+    			    console.log('trying the alert');
+    				// Do alert procedure only once.
+    			    if (state.is_onduty_cache_sent[ka] == undefined) {
+        				console.log('doing the alert');
+        				state.is_onduty_cache_sent[ka] = true;
+        				xemo.server.alert_for_missing_shift_personnel(state, shift);
+    			    }
+    			}
 		    }
 
 		    if (cd < shift.start) {
-			if (state.is_onduty_cache_sent[kr] == undefined) {
-			    state.is_onduty_cache_sent[kr] = state.is_onduty_sms_rx;
-			    state.is_onduty_sms_tx[shift.pid]++;
-			    var delta = Math.round((shift.start.getTime() - cd.getTime()) / 1000 / 60);
-			    if (state.is_onduty_sms_tx[shift.pid] == state.is_onduty_sms_rx[shift.pid]) {
-				xemo.server.notifybysms(
-				    state,
-				    shift.smsphone,
-				    'EMS Schedule Notifcation System\n\n' +
-				    'It looks like you pre-approved yourself for the shift in ' + delta + ' minutes. Everything is OK.'
-				);
-			    } else {
-				if (shift.pid < 0) {
-				    xemo.server.alert_for_no_shift_personnel(state, shift);			
-				} else {
-				    xemo.server.notifybysms(
-				        state,
-					shift.smsphone,
-					'EMS Schedule Notification System\n' +
-					'\n' +
-					'For: ' + shift.name.toUpperCase() + '\n' +
-					'\n' +
-					'Please reply with anything to confirm that someone will be on-duty in ' + delta + ' minutes for your shift.\n\n' +
-					'A failure to reply will result in an ALERT page being transmitted.'
-				    );
-				}	
-			    }
-			}
+    			if (state.is_onduty_cache_sent[kr] == undefined) {
+    			    state.is_onduty_cache_sent[kr] = state.is_onduty_sms_rx;
+    			    state.is_onduty_sms_tx[shift.pid]++;
+    			    var delta = Math.round((shift.start.getTime() - cd.getTime()) / 1000 / 60);
+    			    if (state.is_onduty_sms_tx[shift.pid] == state.is_onduty_sms_rx[shift.pid]) {
+        				xemo.server.notifybysms(
+        				    state,
+        				    shift.smsphone,
+        				    'EMS Schedule Notifcation System\n\n' +
+        				    'It looks like you pre-approved yourself for the shift in ' + delta + ' minutes. Everything is OK.'
+        				);
+    			    } else {
+        				if (shift.pid < 0) {
+        				    xemo.server.alert_for_no_shift_personnel(state, shift);			
+        				} else {
+        				    xemo.server.notifybysms(
+            				    state,
+            					shift.smsphone,
+            					'EMS Schedule Notification System\n' +
+            					'\n' +
+            					'For: ' + shift.name.toUpperCase() + '\n' +
+            					'\n' +
+            					'Please reply with anything to confirm that someone will be on-duty in ' + delta + ' minutes for your shift.\n\n' +
+            					'A failure to reply will result in an ALERT page being transmitted.'
+        				    );
+        				}	
+    			    }
+    			}
 		    }			
 		}
-
+        */
+        
 		/*
 		    Do not worry about notifying for shifts in the past.
 		*/
@@ -1260,7 +1264,7 @@ xemo.server.shiftnotify = function (db, state, group, notifytable, cb) {
 		    Here we are actually going to do the notification.
 		*/
                 xemo.server.notifylog.hasBeenNotified(
-                    db,
+                    state.db_instance,
                     shift.pid, shift.start.getTime() / 1000, 'SCHED_SMS_' + group,
                     _$b(shift)
                 );
@@ -1280,7 +1284,7 @@ xemo.server.fatalRequestError = function (err, res) {
     return;
 }
 
-xemo.server.crashLooper = function (delay, args, cb) {
+xemo.server.crashLooper = function (delay, args, cb, firstcall) {
     var notifydom = domain.create();
 
     /*
@@ -1301,8 +1305,14 @@ xemo.server.crashLooper = function (delay, args, cb) {
     notifydom.on('error', function (err) {
         console.log('NOTIFIER CRASHED');
         console.log(err);
+        console.log(err.stack);
         repeat();
     });
+
+    var _delay = delay;    
+    if (firstcall != undefined) {
+        _delay = 0;
+    }
 
     setTimeout(function () {
         notifydom.run(function () {
@@ -1311,163 +1321,150 @@ xemo.server.crashLooper = function (delay, args, cb) {
                 cb(delay, args, repeat);
             });
         });
-    }, delay);
+    }, _delay);
 }
 
 xemo.server.doNotifier = function (delay, args, repeat) {
-    dbjuggle.opendatabase(args.state.db, function (err, db) {
-        if (err) {
-            repeat();
-            return;
-        }
-        var trans = db.transaction();
+    var trans = args.state.db_instance.transaction();
 
-        trans.add('SELECT id, firstname, middlename, lastname, smsphone FROM personnel', [], 'a');
-        trans.execute(function (t) {
-            var rows = t.results.a.rows;
+    trans.add('SELECT id, firstname, middlename, lastname, smsphone FROM personnel', [], 'a');
+    trans.execute(function (t) {
+        var rows = t.results.a.rows;
 
-            for (var x = 0; x < rows.length; ++x) {
-                var row = rows[x];
+        for (var x = 0; x < rows.length; ++x) {
+            var row = rows[x];
 
-                var name = row.firstname + ' ' + row.middlename + ' ' + row.lastname;
-                var pid = row.id;
-                var smsphone = row.smsphone;
+            var name = row.firstname + ' ' + row.middlename + ' ' + row.lastname;
+            var pid = row.id;
+            var smsphone = row.smsphone;
 
-                function __b(pid, name, smsphone) {
-                    return function (wasnotified) {
-                        if (!wasnotified) {
-                            console.log('doing-initial-sms:' + smsphone + ':' + name + ':' + pid);
-                            xemo.server.notifylog.logNotification(
-                                db,
-                                pid,
-                                0,
-                                'SCHED_SMS_TEST', 0
-                            );
-                            xemo.server.notifybysms(
-                                args.state,
-                                smsphone,
-                                name.toUpperCase() + ',\nIf you have recieved this message please notify Sonia so that she knows that the EMS notification system has the correct number.'
-                            );
-                        }
+            function __b(pid, name, smsphone) {
+                return function (wasnotified) {
+                    if (!wasnotified) {
+                        console.log('doing-initial-sms:' + smsphone + ':' + name + ':' + pid);
+                        xemo.server.notifylog.logNotification(
+                            state.db_instance,
+                            pid,
+                            0,
+                            'SCHED_SMS_TEST', 0
+                        );
+                        xemo.server.notifybysms(
+                            args.state,
+                            smsphone,
+                            name.toUpperCase() + ',\nIf you have recieved this message please notify Sonia so that she knows that the EMS notification system has the correct number.'
+                        );
                     }
                 }
-
-                if (smsphone == null) {
-                    continue;
-                }
-
-                xemo.server.notifylog.hasBeenNotified(
-                    db,
-                    pid, 0, 'SCHED_SMS_TEST',
-                    __b(pid, name, smsphone)
-                );
             }
-        });
 
-        /*
-            The only way to ensure this process is long living
-            is to release these database instances. I may be
-            able create a database pool that reclaims connections
-            that have been inactive for a significant time, but
-            for now let us see if this works good.
-        */
-        xemo.server.notifylog = undefined;
-        xemo.server.shiftnotify(db, args.state, args.group, args.notifytable, function () {
-            repeat();
-        });
+            if (smsphone == null) {
+                continue;
+            }
+
+            xemo.server.notifylog.hasBeenNotified(
+                args.state.db_instance,
+                pid, 0, 'SCHED_SMS_TEST',
+                __b(pid, name, smsphone)
+            );
+        }
+    });
+
+    /*
+        The only way to ensure this process is long living
+        is to release these database instances. I may be
+        able create a database pool that reclaims connections
+        that have been inactive for a significant time, but
+        for now let us see if this works good.
+    */
+    xemo.server.notifylog = undefined;
+    xemo.server.shiftnotify(args.state, args.group, args.notifytable, function () {
+        repeat();
     });
 }
 
 xemo.server.oldSystemSync = function (delay, args, repeat) {
-    dbjuggle.opendatabase(args.state.db, function (err, db) {
+    var nodes = fs.readdir(args.path, function (err, nodes) {
         if (err) {
-            console.log('can not open the database');
+            console.log('unable to read old system path');
             repeat();
         }
+        
+        console.log('synced with old data');
 
-        var nodes = fs.readdir(args.path, function (err, nodes) {
-            if (err) {
-                console.log('unable to read old system path');
-                repeat();
-            }
+        args.pending = 0;
 
-            args.pending = 0;
+        for (var x = 0; x < nodes.length; ++x) {
+            var parts = nodes[x].split('.');
 
-            for (var x = 0; x < nodes.length; ++x) {
-                var parts = nodes[x].split('.');
+            if (parts[0] == 'data' && parts.length == 4) {
+                if (parts[1] == 'Driver' || parts[1] == 'Medic') {
+                    args.todo = [];
 
-                if (parts[0] == 'data' && parts.length == 4) {
-                    if (parts[1] == 'Driver' || parts[1] == 'Medic') {
-                        args.todo = [];
+                    var group = parts[1].toLowerCase();
+                    var year = parseInt(parts[2]);
+                    var month = parseInt(parts[3]);
 
-                        var group = parts[1].toLowerCase();
-                        var year = parseInt(parts[2]);
-                        var month = parseInt(parts[3]);
+                    ++args.pending;
+                    function __worknode(group, year, month, node) {
+                        fs.readFile(
+                            args.path + '/' + nodes[x],
+                            { encoding: 'utf-8' }, function (err, data) {
+                                data = data.split('\n');
 
-                        ++args.pending;
-                        function __worknode(group, year, month, node) {
-                            fs.readFile(
-                                args.path + '/' + nodes[x],
-                                { encoding: 'utf-8' }, function (err, data) {
-                                    data = data.split('\n');
+                                for (var x = 0; x < data.length - 1; ++x) {
+                                    var text = data[x].split('\t').join('\n');
+                                    var datestr = year + '/' + month + '/' + (x + 1);
 
-                                    for (var x = 0; x < data.length - 1; ++x) {
-                                        var text = data[x].split('\t').join('\n');
-                                        var datestr = year + '/' + month + '/' + (x + 1);
+                                    args.todo.push({
+                                        group:    'grp_' + group,
+                                        datestr:  datestr,
+                                        text:     text
+                                    });
+                                }
 
-                                        args.todo.push({
-                                            group:    'grp_' + group,
-                                            datestr:  datestr,
-                                            text:     text
-                                        });
+                                --args.pending;
+                                if (args.pending < 1) {
+                                    /*
+                                        When this happens we have pending.
+                                    */ 
+                                    var t = args.state.db_instance.transaction();
+                                    for (var x = 0; x < args.todo.length; ++x) {
+                                        t.add(
+                                            ' \
+                                                INSERT INTO ?? (date, text) VALUES (?, ?) \
+                                                ON DUPLICATE KEY UPDATE text = ? \
+                                            ',
+                                            [
+                                                args.todo[x].group,
+                                                args.todo[x].datestr,
+                                                args.todo[x].text,
+                                                args.todo[x].text
+                                            ]
+                                        );
                                     }
-
-                                    --args.pending;
-                                    if (args.pending < 1) {
-                                        /*
-                                            When this happens we have pending.
-                                        */
-                                        dbjuggle.opendatabase(args.state.db, function (err, db) {
-                                            var t = db.transaction();
-                                            for (var x = 0; x < args.todo.length; ++x) {
-                                                t.add(
-                                                    ' \
-                                                        INSERT INTO ?? (date, text) VALUES (?, ?) \
-                                                        ON DUPLICATE KEY UPDATE text = ? \
-                                                    ',
-                                                    [
-                                                        args.todo[x].group,
-                                                        args.todo[x].datestr,
-                                                        args.todo[x].text,
-                                                        args.todo[x].text
-                                                    ]
-                                                );
-                                            }
-                                            console.log('synchronized ' + args.todo.length + ' calendar entries from the old system');
-                                            /*
-                                                Just to be safe. Lets clear it.
-                                            */
-                                            args.todo = undefined;
-                                            t.execute();
-                                            repeat();
-                                        });
-                                    }
-                            });
-                        }
-
-                        __worknode(group, year, month, nodes[x]);
+                                    console.log('synchronized ' + args.todo.length + ' calendar entries from the old system');
+                                    /*
+                                        Just to be safe. Lets clear it.
+                                    */
+                                    args.todo = undefined;
+                                    t.execute();
+                                    repeat();
+                                }
+                        });
                     }
 
-                    /*
-                        If args.pending < 0 here then we do not
-                        need to do anything.
-                    */
-                    if (args.pending < 0) {
-                        repeat();
-                    }
+                    __worknode(group, year, month, nodes[x]);
+                }
+
+                /*
+                    If args.pending < 0 here then we do not
+                    need to do anything.
+                */
+                if (args.pending < 0) {
+                    repeat();
                 }
             }
-        });
+        }
     });
 }
 
@@ -1483,9 +1480,14 @@ xemo.server.start = function (state) {
 	to halt the startup until it completes.
     */
     dbjuggle.opendatabase(state.db, function (err, db) {
-	state.db_instance = db;
-	db.acquire();
+	   state.db_instance = db;
+	   db.acquire();
+	   xemo.server.start_L2(state);
     });
+};
+
+
+xemo.server.start_L2 = function (state) {    
     /*
 	These are important structures for the service
 	that helps to make sure that a personnel is on
@@ -1496,11 +1498,12 @@ xemo.server.start = function (state) {
     state.is_onduty_cache_sent = {};
 
     if (state.sync_with_old) {
-	xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync);
+	   xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync, true);
     }
-    for (var group in state.notify_for_groups) {
-        xemo.server.crashLooper(5000, { state: state, group: group, notifytable: state.notify_for_groups[group] }, xemo.server.doNotifier);
-    }
+    
+    //for (var group in state.notify_for_groups) {
+    //   xemo.server.crashLooper(5000, { state: state, group: group, notifytable: state.notify_for_groups[group] }, xemo.server.doNotifier);
+    //}
 
     //xemo.server.alert_for_missing_shift_personnel(state, { name: 'TEST' });
 
