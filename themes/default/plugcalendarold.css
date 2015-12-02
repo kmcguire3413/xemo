@@ -31,9 +31,55 @@
     cursor: pointer;
 }
 
+.plugCalendarWarningTableTitle {
+    font-size: 1.3em;
+    margin:    3px;
+}
+
+.plugCalendarHourTotalsTableTitle {
+    font-size: 1.3em;
+    margin:    3px;
+}
+
+.plugCalendarWarningTable {
+    border-collapse: collapse;
+    margin: 10px;
+}
+
+.plugCalendarWarningTable td {
+    border: 1px solid #000000;
+    padding: 3px 15px 3px 3px;
+}
+
+.plugCalendarHourTotalsTable {
+    border-collapse: collapse;
+    margin: 10px;
+}
+.plugCalendarHourTotalsTable td {
+    border: 1px solid #000000;
+    padding: 3px 15px 3px 3px;
+    font-family: Tahoma;
+}
+
+.plugCalendarHourTotalsTable thead {
+    font-weight:   bold;
+}
+
+.plugCalendar .dayNameTitle {
+    padding-left: 4px;
+    text-align: center;
+    font-size: 0.7em;
+}
+
 .plugCalendar .titleCell {
     font-size:      24pt;
     text-align:     center;
+}
+
+.plugCalendar .dayNumSpan {
+    padding-left: 90%;
+    border:       0px;
+    font-weight:  bold;
 }
 
 .plugCalendar .dayEditBox {

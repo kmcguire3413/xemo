@@ -1,7 +1,7 @@
 var https = require('https');
 var http = require('http');
 var fs = require('fs');
-var crypto = require('crypto');
+var crypto = require('./lib/sha512.js');
 var core = require('./lib/core.js'); 
 var moment = require('moment-timezone');
 var twilio = require('twilio');
@@ -31,6 +31,38 @@ xemo.server.datestr = function (y, m, d) {
     m = xemo.server.padright(m, 2, '0');
     d = xemo.server.padright(d, 2, '0');
     return y + '-' + m + '-' + d;
+};
+
+xemo.server.read_calendar = function (db, args, cb) {
+    var t = db.transaction();
+
+    t.add(
+        'SELECT YEAR(date) AS year, MONTH(date) AS month, DAYOFMONTH(date) AS day, text FROM ?? WHERE date >= DATE(?) and date < DATE(?) ORDER BY date',
+        [
+            'grp_' + args.grp,
+            xemo.server.datestr(args.from_year, args.from_month, args.from_day),
+            xemo.server.datestr(args.to_year, args.to_month, args.to_day)
+        ],
+        'a'
+    );
+    t.add(
+        'SELECT UNIX_TIMESTAMP(changed_when) AS changed_when FROM grpchangelog WHERE grpname = ? ORDER BY changed_when DESC LIMIT 1', [args.grp], 'last'
+    );
+
+    console.log('@@@');
+    t.execute(function (reply) {
+        var out = [];
+        var rows = reply.results.a.rows;
+        for (var x = 0; x < rows.length; ++x) {
+            var row = rows[x];
+            out.push([parseInt(row.year), parseInt(row.month), parseInt(row.day), row.text]);
+        }
+        var last = 0;
+        if (reply.results.last.rows.length > 0) {
+            last = reply.results.last.rows[0].changed_when;
+        }
+        cb(out, last);
+    });
 };
 
 xemo.server.handlerL3 = function (db, state, req, res, args, user) {
@@ -114,7 +146,9 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                     user.pid
                 ]
             );
-            t.execute(function () {});
+            t.execute(function (t) {
+                t.commit();
+            });
             xemo.server.dojsonres(res, 'success');
             return;
         // daylock                  calendar.lock.acquire
@@ -181,6 +215,8 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                     freshtext = t.results.c.rows[0].text;
                 }
 
+                t.commit();
+
                 xemo.server.dojsonres(res, {
                     code:       success ? 'accepted' : 'denied',
                     pid:        bypid,
@@ -225,31 +261,79 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
                     'grptable'
                 );
                 t.execute(function (t) {
+                    t.commit();
                     xemo.server.dojsonres(res, 'success');
                 });
             })
             return;
-        // readcalendar             calendar.range.read
-        case 'readcalendar' || 'calendar.range.read':
+        case 'calendar.month.write_with_last_check':
+            var days = args.days;
+            var year = args.year;
+            var month = args.month;
+            var grp = args.grp;
+            var last = args.last;
+
+            // https://github.com/kmcguire3413/xemo/issues/7
+            //
+            // This is a temporary measure in order to ensure existing functionality.
+            if (args.code != '0767') {
+                xemo.server.dojsonerror(res, 'The code given was not correct.');
+                return;
+            }
+
             var t = db.transaction();
-
-            t.add(
-                'SELECT YEAR(date) AS year, MONTH(date) AS month, DAYOFMONTH(date) AS day, text FROM ?? WHERE date >= DATE(?) and date < DATE(?) ORDER BY date',
-                [
-                    'grp_' + args.grp,
-                    xemo.server.datestr(args.from_year, args.from_month, args.from_day),
-                    xemo.server.datestr(args.to_year, args.to_month, args.to_day)
-                ],
-                'a'
-            );
-
-            t.execute(function (reply) {
-                var out = [];
-                var rows = reply.results.a.rows;
-                for (var x = 0; x < rows.length; ++x) {
-                    var row = rows[x];
-                    out.push([parseInt(row.year), parseInt(row.month), parseInt(row.day), row.text]);
+            // Before this transaction starts we will ensure an exclusive lock
+            // on the group change log table to ensure that we are the only ones
+            // that will make any changes and to prevent any rollbacks from having
+            // to be performed.
+            //t.locktable('grpchangelog', true);
+            t.add('SELECT id, UNIX_TIMESTAMP(changed_when) AS changed_when FROM grpchangelog WHERE grpname = ? ORDER BY changed_when DESC LIMIT 1', [grp], 'r');
+            t.execute(function (t) {
+                if (t.results.r.rows.length > 0 && t.results.r.rows[0].changed_when > last) {
+                    // The schedule has been changed since it was loaded as specified by
+                    // the `last` argument. This operation should fail.
+                    xemo.server.dojsonerror(res, 'The schedule was changed since you loaded the page, therefore, your changed were aborted.');
+                    return;
                 }
+                // Create a continuation as to not release our lock.
+                t = t.transaction();
+                t.add(
+                    'INSERT INTO grpchangelog (changed_when, grpname) VALUES (UNIX_TIMESTAMP(?), ?)',
+                    [(new Date()).getTime() / 1000, grp]
+                );
+                for (var x = 0; x < days.length; ++x) {
+                    t.add(
+                        'INSERT INTO ?? (date, text) VALUES (?, ?) ON DUPLICATE KEY UPDATE text = ?',
+                        [
+                            'grp_' + grp, 
+                            year + '/' + month + '/' + (x + 1),
+                            days[x],
+                            days[x],
+                        ]
+                    );
+                }
+                t.execute(function (t) {
+                    if (t.total_errors > 0) {
+                        xemo.server.dojsonerror(res, 'The database transaction has one or more errors.');
+                        return;
+                    }
+                    xemo.server.dojsonres(res, 'The operation was successful.');
+                    t.commit();
+                });
+            });
+            return;
+        case 'calendar.range.read_with_last':
+            console.log('fetching calendar data');
+            this.read_calendar(db, args, function (out, last) {
+                console.log('sending calendar data', last);
+                xemo.server.dojsonres(res, {
+                    days:     out,
+                    last:     last,
+                });
+            });
+            return;
+        case 'readcalendar' || 'calendar.range.read':
+            this.read_calendar(db, args, function (out) {
                 xemo.server.dojsonres(res, out);
             });
             return;
@@ -1497,9 +1581,9 @@ xemo.server.start_L2 = function (state) {
     state.is_onduty_sms_tx = {};
     state.is_onduty_cache_sent = {};
 
-    if (state.sync_with_old) {
-	   xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync, true);
-    }
+    //if (state.sync_with_old) {
+	//   xemo.server.crashLooper(1000 * 60 * 3, { state: state, path: '/home/kmcguire/www/dschedule' }, xemo.server.oldSystemSync, true);
+    //}
     
     //for (var group in state.notify_for_groups) {
     //   xemo.server.crashLooper(5000, { state: state, group: group, notifytable: state.notify_for_groups[group] }, xemo.server.doNotifier);

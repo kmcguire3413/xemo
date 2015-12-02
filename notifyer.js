@@ -28,6 +28,7 @@ notifyer.set_as_notified = function (pid, notifiedfor_unixtime, system, state, c
 		[pid, notifiedfor_unixtime, system, state]
 	);
 	trans.execute(function (t) {
+		t.commit();
 		if (cb) {
 			cb();
 		}
@@ -160,6 +161,7 @@ notifyer.fetch_schedule = function (sd, ed, group, cb) {
 				refined.push(shift);
 			});
 		}
+
 		core.textcalendar.refineRoughShifts(refined, function (year, month, day, hour, minute) {
             return new Date(moment.tz({
                 year:    year,
@@ -266,12 +268,12 @@ notifyer.get_alert_level = function (shift, notifiedon) {
 		// directly to the personnel so lets just ignore it.
 		return null;
 	}
-	if (hours_until <= 1) {
+	if (hours_until <= 0.5) {
 		return [3, hours_until, 'DANGER']
 	}
-	if (hours_until <= 2) {
-		return [2, hours_until, 'WARNING'];
-	}
+	//if (hours_until <= 2) {
+	//	return [2, hours_until, 'WARNING'];
+	//}
 	if (hours_since > 12) {
 		return [1, hours_until, 'CAUTION'];
 	}
@@ -287,6 +289,7 @@ notifyer.consider_admin_shift_problem_alert = function (shift, problem) {
 
 	self.test_if_notified(shift.pid, shift.start.getTime() / 1000, sys, function (test_good) {
 		if (!test_good) {
+			console.log('doing');
 			self.set_as_notified(shift.pid, shift.start.getTime() / 1000, sys);
 			self.sms_admin(problem);
 		}
@@ -309,6 +312,10 @@ notifyer.consider_admin_response_alert = function (shift) {
 				// repeated at different times.
 				if (!notifiedon && shift.name != '<nobody>') {
 					return;
+				}
+
+				if (!notifiedon) {
+					notifiedon = new Date(0);
 				}
 
 				//var alert_level = self.get_alert_level(shift.start);
@@ -339,16 +346,16 @@ notifyer.consider_admin_response_alert = function (shift) {
 							self.sms_admin(
 								alert_level[2] + ': ' + alert_level[1] + ' HOURS UNTIL SHIFT START\n' +
 								'\n' +
-								'The shift ' + moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm') + ' has a problem detailed below:\n' +
+								'The shift ' + moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm') + ' has a problem detailed below:\n\n' +
 								problem
 							);
 						} else {
 							self.sms_admin(
 								alert_level[2] + ': ' + alert_level[1] + ' HOURS UNTIL SHIFT START\n' +
 								'\n' +
-								'The personnel, ' + shift.pdata.fullname + ', has not responded for the shift ' + moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm') + '.\n' +
+								'The personnel, ' + (shift.pdata ? shift.pdata.fullname : '<error>') + ', has not responded for the shift ' + moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm') + '.\n' +
 								'\n' +
-								'To acknowledge for this personnel reply with @ack:' + shift.smsphone
+								'To override reply with @ack:' + shift.pid
 							);
 						}
 					}
@@ -401,21 +408,23 @@ notifyer.check_sched = function () {
 
                 var problem = null;
 
-				//if (shift.name == '<nobody>') {
-                //    problem = 'The ' + group.toUpperCase() + ' schedule has a shift with no one assigned on ' +
-                //          local_start.format('MMM, Do HH:mm') + '.';
-				//}
+				if (shift.name == '<nobody>') {
+					error = null;
+					problem = 
+						'Shift: ' + local_start.format('MMM, Do HH:mm') + '\n' +
+						'\nThere is nobody assigned on upcoming shift. To ignore this place a question mark in the name portion on the schedule.\n\n' +
+						'This is to help not forget. As the shift approaches a message will be sent a few more times and finally a phone call should happen.';
+				}
 
-				if (problem == null && error != null) {
+				if (error != null) {
 					problem =
                         'The name "' + shift.name + '" could not be matched to a personnel.\n\n' +
                         'Unable to determine phone number.\n\n' +
-                        'Error was: "' + error + '"\n\n' +
+                        'Error was:\n' + error + '\n\n' +
                         'Shift: ' + local_start.format('MMM, Do HH:mm') + '\n' +
                         '\n' +
-                        'To fix requires schedule edit.'
+                        'Edit schedule to resolve name conflict.'
                     ;
-					continue;
 				}
 
 				if (problem) {
@@ -514,37 +523,54 @@ notifyer.http_request = function (req, res, params, url) {
 	}
 
 	var from = params.From;
-	var body = params.Body;
+	var body = params.Body || '';
 	var to = params.To;
+
+	console.log(params);
+
+	res.writeHead(200, {'Content-Type': 'text/plain'});
+
+	var self = this;
 
 	if (body.indexOf('@ack:') == 0) {
 		var o_from = from;
-		from = body.substring(5);
-		self.sms_admin('The acknowledgement override given by ' + o_from + ' was successful for ' + from + '.');
-		// Replace body with something to let us know it was an acknowledgement
-		// from someone else for this person.
-		body = '@ack-from:' + o_from;
+		var pid;
+		try {
+			pid = parseInt(body.substring(5));
+			var t = this.db.transaction();
+			t.add('SELECT firstname, lastname, smsphone FROM personnel WHERE id = ?', [pid], 'r');
+			t.add('SELECT firstname, lastname FROM personnel WHERE smsphone = ?', [from], 'x');
+			t.execute(function (t) {
+				if (t.results.r.rows.length < 1) {
+					res.end('The personnel with ID ' + pid + ' could not be found. Check the ID.');
+					return;
+				}
+				if (t.results.x.rows.length < 1) {
+					res.end('You are not authorized to execute this command.');
+					return;
+				}
+				var fullname = t.results.r.rows[0].firstname + ' ' + t.results.r.rows[0].lastname;
+				var smsphone = t.results.r.rows[0];
+				var adminname = t.results.x.rows[0].firstname + ' ' + t.results.x.rows[0].lastname;
+
+				t = self.db.transaction();
+				t.add(
+					'INSERT INTO sms_recv (fromphone, tophone, message, recvon) VALUES (?, ?, ?, NOW())',
+					[smsphone, to, '@admin-override[' + from + ']']
+				);
+
+				self.sms_admin('Acknowledgement override for ' + fullname + ' successful from ' + adminname + '.');
+
+				t.execute(function (t) {
+					t.commit();
+				});
+			});
+		} catch (err) {
+			res.end('The ID "' + body.substring(5) + '" could not be understood as a number.');
+		}
 	} else {
-		self.sms_send(from, 'Your response was interpreted as acceptance and acknowledgement of this shift. If this is incorrect then contact someone.');	
+		res.end('Your response was interpreted as acceptance and acknowledgement of this shift. If this is incorrect then contact someone.');
 	}
-
-	var trans = this.db.transaction();
-
-	if (!from || !body || !to) {
-		res.writeHead(200, {'Content-Type': 'text/plain'});
-		res.end('Your transaction was successful, however, there was nothing to be done.');		
-		return;
-	}
-
-	trans.add(
-		'INSERT INTO sms_recv (fromphone, tophone, message, recvon) VALUES (?, ?, ?, NOW())',
-		[from, to, body]
-	);
-
-	trans.execute(function (t) {
-		res.writeHead(200, {'Content-Type': 'text/plain'});
-		res.end('');
-	});
 };
 
 notifyer.start = function (cfg) {
@@ -557,7 +583,7 @@ notifyer.start = function (cfg) {
 
 	dbjuggle.opendatabase(cfg.db, function (err, db) {
 		self.db = db;
-
+		console.log('database opened');
 		db.acquire();
 		setInterval(function () {
 			self.check_new();
