@@ -1,0 +1,23 @@
+{
+	"name":          "xemo",
+	"version":       "1.13.324",
+	"description":   "A management web service.",
+	"author":        "Leonard Kevin McGuire Jr. <kmcg3413@gmail.com>",
+	"main":          "server.js",
+	"repository":    {
+		"type":   "git",
+		"url":    "https://github.com/kmcguire3413/xemo.git",
+	},
+	"dependencies": {
+		"dbjuggle":        "*",
+		"mysql":           "2.9.0",
+		"guid":            "0.0.12",
+		"jszip":           "2.5.0",
+		"moment":          "2.10.6",
+		"moment-timezone": "0.4.0",
+		"twilio":          "2.3.0",
+		"uuid":            "2.0.1",
+	},
+	"private":      true,
+	"license":      "NONE",
+}
