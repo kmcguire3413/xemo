@@ -6,7 +6,7 @@
 	"main":          "server.js",
 	"repository":    {
 		"type":   "git",
-		"url":    "https://github.com/kmcguire3413/xemo.git",
+		"url":    "https://github.com/kmcguire3413/xemo.git"
 	},
 	"dependencies": {
 		"dbjuggle":        "*",
@@ -16,8 +16,8 @@
 		"moment":          "2.10.6",
 		"moment-timezone": "0.4.0",
 		"twilio":          "2.3.0",
-		"uuid":            "2.0.1",
+		"uuid":            "2.0.1"
 	},
 	"private":      true,
-	"license":      "NONE",
+	"license":      "NONE"
 }
