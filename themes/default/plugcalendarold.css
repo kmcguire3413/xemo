@@ -65,6 +65,25 @@
     font-weight:   bold;
 }
 
+.calendar_paycalc_table_title {
+    font-size:   1.2em;
+    background-color:  white;
+    border: 1px solid black;
+    border-radius: 5px;
+    padding: 5px;
+}
+
+.calendar_paycalc_table {
+    border-collapse:    collapse;
+    border: 1px solid black;
+    margin: 10px;
+}
+
+.calendar_paycalc_table td {
+    border: 1px solid black;
+    padding: 2px 6px 2px 6px;
+}
+
 .plugCalendar .dayNameTitle {
     padding-left: 4px;
     text-align: center;

@@ -289,17 +289,20 @@ xemo.server.handlerL3 = function (db, state, req, res, args, user) {
             //t.locktable('grpchangelog', true);
             t.add('SELECT id, UNIX_TIMESTAMP(changed_when) AS changed_when FROM grpchangelog WHERE grpname = ? ORDER BY changed_when DESC LIMIT 1', [grp], 'r');
             t.execute(function (t) {
-                if (t.results.r.rows.length > 0 && t.results.r.rows[0].changed_when > last) {
-                    // The schedule has been changed since it was loaded as specified by
-                    // the `last` argument. This operation should fail.
-                    xemo.server.dojsonerror(res, 'The schedule was changed since you loaded the page, therefore, your changed were aborted.');
-                    return;
+                if (t.results.r.rows.length > 0) {
+                    console.log('@@##@@', t.results.r.rows[0].changed_when, last);
+                    if (t.results.r.rows[0].changed_when > last) {
+                        // The schedule has been changed since it was loaded as specified by
+                        // the `last` argument. This operation should fail.
+                        xemo.server.dojsonerror(res, 'The schedule was changed since you loaded the page, therefore, your changed were aborted.');
+                        return;
+                    }
                 }
                 // Create a continuation as to not release our lock.
                 t = t.transaction();
                 t.add(
-                    'INSERT INTO grpchangelog (changed_when, grpname) VALUES (UNIX_TIMESTAMP(?), ?)',
-                    [(new Date()).getTime() / 1000, grp]
+                    'INSERT INTO grpchangelog (changed_when, grpname) VALUES (NOW(), ?)',
+                    [grp]
                 );
                 for (var x = 0; x < days.length; ++x) {
                     t.add(

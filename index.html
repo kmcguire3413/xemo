@@ -208,13 +208,13 @@
             }
 
             TimeKeeper.prototype.waitShow = function (msg, iserror) {
-                $(this.container).hide();
+                //$(this.container).hide();
                 $(this.waitframe).empty();
-                this.waitframe.style['background-color'] = 'white';
+                this.waitframe.style['background-color'] = 'rgba(1.0, 1.0, 1.0, 0.3)';
                 this.waitframe.style.position = 'absolute';
                 this.waitframe.style.width = window.innerWidth + 'px';
                 this.waitframe.style.height = window.innerHeight + 'px';
-                $(this.waitframe).show();
+                //$(this.waitframe).show();
             }
 
             TimeKeeper.prototype.waitError = function (msg) {

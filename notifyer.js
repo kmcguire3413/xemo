@@ -11,6 +11,7 @@ notifyer.test_if_notified = function (pid, notifiedfor_unixtime, system, cb) {
 	trans.add('SELECT id, UNIX_TIMESTAMP(notifiedon) AS notifiedon, state FROM notifylog2 WHERE pid = ? AND UNIX_TIMESTAMP(notifiedfor) = ? AND system = ?', [pid, notifiedfor_unixtime, system], 'notifylog');
 	trans.execute(function (t) {
 		if (t.results && t.results.notifylog && t.results.notifylog.rows && t.results.notifylog.rows.length > 0) {
+			console.log('notifiedon', t.results.notifylog.rows[0].notifiedon);
 			cb(true, t.results.notifylog.rows[0].state, new Date(t.results.notifylog.rows[0].notifiedon * 1000));
 		} else {
 			cb(false, null);
@@ -41,11 +42,11 @@ notifyer.test_if_new = function (prec) {
 	this.test_if_notified(prec.id, 0, 'SCHED_SMS_TEST', function (test_good) {
 		if (!test_good) {
 			if (prec.smsphone != null) {
-				notifyer.sms_send(
-					prec.smsphone, 
-					'This number has been added to the EMS notification system under ' +
-					'the name, ' + prec.fullname + '.'
-				);
+				//notifyer.sms_send(
+				//	prec.smsphone, 
+				//	'This number has been added to the EMS notification system under ' +
+				//	'the name, ' + prec.fullname + '.'
+				//);
 				self.set_as_notified(prec.id, 0, 'SCHED_SMS_TEST');
 			}
 		}
@@ -64,9 +65,9 @@ notifyer.abort = function (msg) {
 
 
 notifyer.makecall_admin = function (say) {
-	//for (var x = 0; x < this.cfg.notifyer_admin_numbers.length; ++x) {
-	this.makecall('+13345807300', say);
-	//}
+	for (var x = 0; x < this.cfg.notifyer_admin_numbers.length; ++x) {
+		this.makecall(this.cfg.notifyer_admin_numbers[x], say);
+	}
 };
 
 
@@ -236,7 +237,7 @@ notifyer.consider_notifying_for_shift = function (shift) {
 notifyer.fetch_sms_recv = function (start, phonenum, cb) {
 	var trans = this.db.transaction();
 	trans.add(
-		'SELECT recvon, message FROM sms_recv WHERE recvon > UNIX_TIMESTAMP(?) AND fromphone = ? ORDER BY id',
+		'SELECT recvon, message FROM sms_recv WHERE recvon > FROM_UNIXTIME(?) AND fromphone = ? ORDER BY id',
 		[start.getTime() / 1000, phonenum],
 		'r'
 	);
@@ -299,10 +300,19 @@ notifyer.consider_admin_shift_problem_alert = function (shift, problem) {
 notifyer.consider_admin_response_alert = function (shift) {
 	var self = this;
 
+	// None of this applies to John Estes
+	if (shift.pid == 5) {
+		return;
+	}				
+
 	var sys = 'SCHED_SMS_' + shift.group;
 	self.test_if_notified(shift.pid, shift.start.getTime() / 1000, sys, function (test_good, state, notifiedon) {
-		self.fetch_sms_recv(shift.start, shift.smsphone, function (msgs) {
+		if (!test_good) {
+			return;
+		}
+		self.fetch_sms_recv(notifiedon, shift.smsphone, function (msgs) {
 			if (msgs.length == 0) {
+				console.log('msgs.length == 0', shift.name);
 				// Only do this if we can say with high reliability that
 				// we have appeared to have successfully sent a SMS message
 				// to this personnel.
@@ -327,7 +337,18 @@ notifyer.consider_admin_response_alert = function (shift) {
 					return;
 				}
 
-				alert_level[1] = Math.round(alert_level[1]);
+				alert_level[1] = Number(alert_level[1].toFixed(1));
+
+				// Make sure we are not disturbing someone during sleeping hours for
+				// some minor issue that is not important enough.
+                var cur_hour = parseInt(moment.tz(new Date(), 'America/Chicago').format('HH'));
+                // If the alert level is 3 or above then send the message regardless of the
+                // time.
+				if (alert_level[0] < 3) {
+					if (cur_hour < 8 || cur_hour > 20) {
+						return;
+					}
+				}
 
 				var sys = 'SCHED_SMS_ALERT_' + alert_level[0] + '_' + shift.group;
 
@@ -338,16 +359,15 @@ notifyer.consider_admin_response_alert = function (shift) {
 						var local_start_disp = moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm');
 
 						if (alert_level[0] == 3) {
-							self.makecall_admin('The eclectic schedule system shows that a shift that is to start in the hour has not been confirmed for ' + shift.pdata.fullname + ' on ' + local_start_disp + '.');
+							self.makecall_admin('The eclectic schedule system shows that a shift that is to start in the hour has not been confirmed for ' + (shift.pdata ? shift.pdata.fullname : shift.name) + ' on ' + local_start_disp + '.');
 						}
 
-						var problem = '';
 						if (shift.problem) {
 							self.sms_admin(
 								alert_level[2] + ': ' + alert_level[1] + ' HOURS UNTIL SHIFT START\n' +
 								'\n' +
 								'The shift ' + moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm') + ' has a problem detailed below:\n\n' +
-								problem
+								shift.problem
 							);
 						} else {
 							self.sms_admin(
@@ -438,8 +458,9 @@ notifyer.check_sched = function () {
 				// must do what it must in regards to the fact.
 				if (cd >= ntime) {
                 	self.consider_notifying_for_shift(shift);
-                	self.consider_admin_response_alert(shift);
                 }
+                
+                self.consider_admin_response_alert(shift);
 			}
 
 			console.log('processed ' + sched.length + ' schedule entries');
@@ -550,8 +571,11 @@ notifyer.http_request = function (req, res, params, url) {
 					return;
 				}
 				var fullname = t.results.r.rows[0].firstname + ' ' + t.results.r.rows[0].lastname;
-				var smsphone = t.results.r.rows[0];
+				var smsphone = t.results.r.rows[0].smsphone;
 				var adminname = t.results.x.rows[0].firstname + ' ' + t.results.x.rows[0].lastname;
+
+				//fullname = fullname.replace(new RegEx('  ', 'g'), ;
+				//adminname = adminname.replace(new RegEx('  ', 'g'), '');
 
 				t = self.db.transaction();
 				t.add(
@@ -559,17 +583,31 @@ notifyer.http_request = function (req, res, params, url) {
 					[smsphone, to, '@admin-override[' + from + ']']
 				);
 
-				self.sms_admin('Acknowledgement override for ' + fullname + ' successful from ' + adminname + '.');
+				self.sms_admin('The shift for ' + fullname + ' was acknowledged by ' + adminname + '.');
+
+				self.sms_send(smsphone, 'The shift was acknowledged for you by ' + adminname + '.');
+
+				res.end('The acknowledgement override was successful for ' + fullname + '.');
 
 				t.execute(function (t) {
 					t.commit();
 				});
 			});
+			return;
 		} catch (err) {
 			res.end('The ID "' + body.substring(5) + '" could not be understood as a number.');
 		}
 	} else {
-		res.end('Your response was interpreted as acceptance and acknowledgement of this shift. If this is incorrect then contact someone.');
+		var t = self.db.transaction();
+		t.add(
+			'INSERT INTO sms_recv (fromphone, tophone, message, recvon) VALUES (?, ?, ?, NOW())',
+			[from, to, body]
+		);
+		t.execute(function (t) {
+			t.commit();
+		});
+
+		res.end('Thank you for letting us know that you acknowledged the message. Contact someone if the message is not correct.');
 	}
 };
 
