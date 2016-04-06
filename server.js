@@ -4,7 +4,6 @@ var fs = require('fs');
 var crypto = require('./lib/sha512.js');
 var core = require('./lib/core.js'); 
 var moment = require('moment-timezone');
-var twilio = require('twilio');
 var domain = require('domain');
 var dbjuggle = require('dbjuggle');
 var uuid = require('uuid');
