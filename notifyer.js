@@ -19,6 +19,19 @@ notifyer.test_if_notified = function (pid, notifiedfor_unixtime, system, cb) {
 	});
 };
 
+notifyer.last_called = function (pid, cb) {
+	var trans = this.db.transaction();
+	trans.add('SELECT UNIX_TIMESTAMP(reportedon) AS reportedon, status FROM notifylog_answered WHERE pid = ? ORDER BY reportedon DESC LIMIT 1', [pid], 'answered');
+	trans.execute(function (t) {
+		if (t.results && t.results.answered && t.results.answered.rows && t.results.answered.rows.length > 0) {
+			console.log('answeredon', t.results.answered.rows[0].status);
+			cb(t.results.answered.rows[0].reportedon * 1000, t.results.answered.rows[0].status);
+		} else {
+			cb(null, null);
+		}
+	});	
+}
+
 notifyer.set_as_notified = function (pid, notifiedfor_unixtime, system, state, cb) {
 	var trans = this.db.transaction();
 	if (state == undefined) {
@@ -71,9 +84,7 @@ notifyer.makecall_admin = function (say) {
 };
 
 
-notifyer.makecall = function (tophone, say, cb) {
-
-
+notifyer.makecall = function (tophone, say, cb, pid) {
 	console.log('call', tophone, say);
 
 	var self = this;
@@ -85,14 +96,19 @@ notifyer.makecall = function (tophone, say, cb) {
     var calldataid = this.calldata_next_id;
     this.calldata_next_id = this.calldata_next_id + 1;
 
-    this.calldata[this.calldataid] = 
+    this.calldata[calldataid] = 
         '<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/><Say>' + say + '</Say></Response>';
+
+    if (pid == undefined) {
+    	pid == '-1';
+    }
 
     client.makeCall({
         to:       tophone, 
 		from:     this.cfg.twilio_from_number,
-        url: 	  this.cur_baseurl + 'calldata?id=' + calldataid
+        url: 	  this.cur_baseurl + 'calldata?id=' + calldataid + '&pid=' + pid
     }, function(err, responseData) {
+    	console.log('respData', responseData);
     	if (err) {
     		if (cb) {
     			cb(false);
@@ -269,6 +285,10 @@ notifyer.get_alert_level = function (shift, notifiedon) {
 		// directly to the personnel so lets just ignore it.
 		return null;
 	}
+	if (hours_until <= 15.0 / 60.0) {
+		return [4, hours_until, 'CRITICAL']
+	}
+
 	if (hours_until <= 0.5) {
 		return [3, hours_until, 'DANGER']
 	}
@@ -358,26 +378,39 @@ notifyer.consider_admin_response_alert = function (shift) {
 
 						var local_start_disp = moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm');
 
+						if (alert_level[0] == 4) {
+							self.last_called(shift.pid, function (reportedon, status) {
+								reportedon = new Date(reportedon);
+								if (status != 'in-progress' && reportedon > shift.start) {
+									var pname = shift.pdata ? shift.pdata.fullname : shift.name;
+									self.makecall_admin(
+										//'The eclectic schedule system shows that a shift that is to start in the hour has not been confirmed for ' + (shift.pdata ? shift.pdata.fullname : shift.name) + ' on ' + local_start_disp + '.');
+										'EMS schedule was not able to contact ' + pname + ' whose shift is about to start. The phone call to this person was not answered on ' + str(reportedon) + '.'
+									);
+								}
+							});
+						}
+
 						if (alert_level[0] == 3) {
-							self.makecall_admin('The eclectic schedule system shows that a shift that is to start in the hour has not been confirmed for ' + (shift.pdata ? shift.pdata.fullname : shift.name) + ' on ' + local_start_disp + '.');
-							self.makecall(shift.smsphone, (shift.pdata ? shift.pdata.fullname : shift.name) + ' you have not responded using a text message to confirm that you are aware of a shift starting within the hour according to the schedule for ' + local_start_disp + '. Please respond by text with any message so that no ambulance calls will be missed! I am a computer and I have not been programmed to comprehend your voice during this call.');
+							self.makecall(shift.smsphone, (shift.pdata ? shift.pdata.fullname : shift.name) + ' you have not responded using a text message.', shift.pid);
 						}
 
 						if (shift.problem) {
-							self.sms_admin(
+							/*self.sms_admin(
 								alert_level[2] + ': ' + alert_level[1] + ' HOURS UNTIL SHIFT START\n' +
 								'\n' +
 								'The shift ' + moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm') + ' has a problem detailed below:\n\n' +
 								shift.problem
-							);
+							);*/
 						} else {
+							/*
 							self.sms_admin(
 								alert_level[2] + ': ' + alert_level[1] + ' HOURS UNTIL SHIFT START\n' +
 								'\n' +
 								'The personnel, ' + (shift.pdata ? shift.pdata.fullname : '<error>') + ', has not responded for the shift ' + moment.tz(shift.start, 'America/Chicago').format('MMM, Do HH:mm') + '.\n' +
 								'\n' +
 								'To override reply with @ack:' + shift.pid
-							);
+							);*/
 							self.sms_send(shift.smsphone,
 								alert_level[2] + ': ' + alert_level[1] + ' HOURS UNTIL SHIFT START\n' +
 								'\n' +
@@ -418,7 +451,7 @@ notifyer.check_sched = function () {
 				var error = self.assign_pid_to_shift(pdata, shift);
 
 				var local_start = moment.tz(shift.start, 'America/Chicago');
-				var local_end = moment.tz(shift.start, 'America/Chicago');
+				var local_end = moment.tz(shift.start, 'America/Chicago');				
 
 				if (cd > shift.start) {
 					continue;
@@ -535,16 +568,30 @@ notifyer.check_new = function () {
 notifyer.http_request = function (req, res, params, url) {
 	var self = this;
 
+	console.log('url', url, params);
+
 	// url: 	  this.cur_baseurl + 'calldata?id=' + calldataid
 	if (url == '/calldata') {
-		var calldataid = params.calldataid;
-
+		var calldataid = params.id;
 		if (this.calldata[calldataid] == undefined) {
 			res.writeHead(404, {'Content-Type': 'text/xml'});
 			res.end('');
 		} else {
 			res.writeHead(200, {'Content-Type': 'text/xml'});
 			res.end(this.calldata[calldataid]);
+
+			var pid = params.pid;
+			if (pid != undefined) {
+				pid = parseInt(pid);
+				var t = self.db.transaction();
+				t.add('INSERT INTO notifylog_answered (pid, reportedon, status) VALUES (?, NOW(), ?)',
+					[pid, params.CallStatus],
+					'x'
+				);
+				t.execute(function (t) {
+					t.commit();
+				});
+			}
 			// TODO: delete this entry after some time (6 hours)
 		}
 		return;
@@ -636,6 +683,18 @@ notifyer.start = function (cfg) {
 		}, 1000 * 3);
 		console.log('notifyer interval started');
 	});
+
+	console.log('setting up test call');
+	setTimeout(function () {
+		console.log('doing test call');
+		self.makecall('+13345807300', 'hello', function (x) {
+
+		}, 1020);
+
+		self.last_called(1020, function (reportedon, status) {
+			console.log('@@@@', reportedon, status);
+		});
+	}, 3000);
 
 	//this.date_override = new Date();
 	//this.date_override.setDate(this.date_override.getDate() - 4);
