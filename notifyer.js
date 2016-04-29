@@ -684,6 +684,7 @@ notifyer.start = function (cfg) {
 		console.log('notifyer interval started');
 	});
 
+	/*
 	console.log('setting up test call');
 	setTimeout(function () {
 		console.log('doing test call');
@@ -695,6 +696,7 @@ notifyer.start = function (cfg) {
 			console.log('@@@@', reportedon, status);
 		});
 	}, 3000);
+	*/
 
 	//this.date_override = new Date();
 	//this.date_override.setDate(this.date_override.getDate() - 4);
