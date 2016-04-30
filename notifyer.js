@@ -510,7 +510,7 @@ notifyer.check_sched = function () {
 
 notifyer.get_pdata = function (cb) {
 	var trans = this.db.transaction();
-	trans.add('SELECT id, firstname, middlename, lastname, surname, dateadded, smsphone, duty_alert FROM personnel', [], 'a');
+	trans.add('SELECT id, firstname, middlename, lastname, surname, UNIX_TIMESTAMP(dateadded) AS dateadded, smsphone, duty_alert FROM personnel', [], 'a');
 	trans.execute(function (t) {
 		var out = t.results.a.rows;
 		var pdata = {};
@@ -677,12 +677,25 @@ notifyer.start = function (cfg) {
 		self.db = db;
 		console.log('database opened');
 		db.acquire();
+
+		// DEBUG
+    	/*self.get_pdata(function (pdata) {	
+    		var result = core.getPersonnelIDFromName(pdata, 'wilkerson', new Date());
+    		console.log('result', result);
+    	});
+		return;
+		*/
+
 		setInterval(function () {
 			self.check_new();
 			self.check_sched();
 		}, 1000 * 3);
 		console.log('notifyer interval started');
 	});
+
+
+	// DEBUG
+	//return;
 
 	/*
 	console.log('setting up test call');
