@@ -6,12 +6,18 @@ var moment = require('moment-timezone');
 
 var notifyer = {};
 
+
+notifyer.log = function (msg) {
+	msg.msg_date = new Date();
+	console.log(JSON.stringify(msg))
+}
+
 notifyer.test_if_notified = function (pid, notifiedfor_unixtime, system, cb) {
+	this.log({ f: 'test_if_notified', pid: pid, notifiedfor_unixtime: notifiedfor_unixtime, system: system, cb: cb });
 	var trans = this.db.transaction();
 	trans.add('SELECT id, UNIX_TIMESTAMP(notifiedon) AS notifiedon, state FROM notifylog2 WHERE pid = ? AND UNIX_TIMESTAMP(notifiedfor) = ? AND system = ?', [pid, notifiedfor_unixtime, system], 'notifylog');
 	trans.execute(function (t) {
 		if (t.results && t.results.notifylog && t.results.notifylog.rows && t.results.notifylog.rows.length > 0) {
-			console.log('notifiedon', t.results.notifylog.rows[0].notifiedon);
 			cb(true, t.results.notifylog.rows[0].state, new Date(t.results.notifylog.rows[0].notifiedon * 1000));
 		} else {
 			cb(false, null);
@@ -20,11 +26,11 @@ notifyer.test_if_notified = function (pid, notifiedfor_unixtime, system, cb) {
 };
 
 notifyer.last_called = function (pid, cb) {
+	this.log({ f: 'last_called', pid: pid, cb: cb });
 	var trans = this.db.transaction();
 	trans.add('SELECT UNIX_TIMESTAMP(reportedon) AS reportedon, status FROM notifylog_answered WHERE pid = ? ORDER BY reportedon DESC LIMIT 1', [pid], 'answered');
 	trans.execute(function (t) {
 		if (t.results && t.results.answered && t.results.answered.rows && t.results.answered.rows.length > 0) {
-			console.log('answeredon', t.results.answered.rows[0].status);
 			cb(t.results.answered.rows[0].reportedon * 1000, t.results.answered.rows[0].status);
 		} else {
 			cb(null, null);
@@ -33,6 +39,7 @@ notifyer.last_called = function (pid, cb) {
 }
 
 notifyer.set_as_notified = function (pid, notifiedfor_unixtime, system, state, cb) {
+	this.log({ f: 'set_as_notified', pid: pid, notifiedfor_unixtime: notifiedfor_unixtime, system: system, state: state, cb: cb });
 	var trans = this.db.transaction();
 	if (state == undefined) {
 		state = 0;
@@ -51,7 +58,7 @@ notifyer.set_as_notified = function (pid, notifiedfor_unixtime, system, state, c
 
 notifyer.test_if_new = function (prec) {
 	var self = this;
-
+	this.log({ f: 'test_if_new', prec: prec });
 	this.test_if_notified(prec.id, 0, 'SCHED_SMS_TEST', function (test_good) {
 		if (!test_good) {
 			if (prec.smsphone != null) {
@@ -78,6 +85,7 @@ notifyer.abort = function (msg) {
 
 
 notifyer.makecall_admin = function (say) {
+	this.log({ f: 'makecall_admin', say: say });
 	for (var x = 0; x < this.cfg.notifyer_admin_numbers.length; ++x) {
 		this.makecall(this.cfg.notifyer_admin_numbers[x], say);
 	}
@@ -85,7 +93,7 @@ notifyer.makecall_admin = function (say) {
 
 
 notifyer.makecall = function (tophone, say, cb, pid) {
-	console.log('call', tophone, say);
+	this.log({ f: 'makecall', tophone: tophone, say: say, pid: pid, cb: cb });
 
 	var self = this;
     var client = twilio(this.cfg.twilio_auth[0], this.cfg.twilio_auth[1]);
@@ -108,7 +116,7 @@ notifyer.makecall = function (tophone, say, cb, pid) {
 		from:     this.cfg.twilio_from_number,
         url: 	  this.cur_baseurl + 'calldata?id=' + calldataid + '&pid=' + pid
     }, function(err, responseData) {
-    	console.log('respData', responseData);
+    	self.log({ f: 'makecall@response', responseData: responseData, err: err });
     	if (err) {
     		if (cb) {
     			cb(false);
@@ -122,27 +130,32 @@ notifyer.makecall = function (tophone, say, cb, pid) {
 };
 
 notifyer.sms_send = function (tophone, msg) {
+	this.log({ f: 'sms_send', tophone: tophone, msg: msg });
 	var client = twilio(this.cfg.twilio_auth[0], this.cfg.twilio_auth[1]);
-    client.sendMessage({
+	var self = this;
+    var result = client.sendMessage({
         to:    tophone,
         from:  this.cfg.twilio_from_number,
         body:  msg
+    }, function (err, message) {
+    	self.log({ f: 'sms_send@twilio_client_result', err: err, message: message });
     });
-
-	console.log('sms', tophone, msg);
 };
 
 notifyer.sms_admin = function (msg) {
+	this.log({ f: 'sms_admin', msg: msg });
 	for (var x = 0; x < this.cfg.notifyer_admin_numbers.length; ++x) {
 		this.sms_send(this.cfg.notifyer_admin_numbers[x], msg);
 	}
 };
 
 notifyer.sms_personnel = function (pdata, msg) {
+	this.log({ f: 'sms_personnel', pdata: pdata, msg: msg });
 	this.sms_send(pdata.smsphone, msg);
 };
 
 notifyer.fetch_schedule = function (sd, ed, group, cb) {
+	this.log({ f: 'fetch_schedule', sd: sd, ed: ed, group: group, cb: cb });
 	var trans = this.db.transaction();
 	trans.add(
 		'SELECT YEAR(date) AS year, MONTH(date) AS month, DAYOFMONTH(date) AS day, text FROM ?? WHERE date >= FROM_UNIXTIME(?) AND date < FROM_UNIXTIME(?) ORDER BY date',
@@ -195,6 +208,7 @@ notifyer.fetch_schedule = function (sd, ed, group, cb) {
 
 notifyer.sms_send_shift_conditional = function (shift, notifiedfor_unix, sys, msg) {
 	var self = this;
+	this.log({ f: 'sms_send_shift_conditional', shift: shift, notifiedfor_unix: notifiedfor_unix, sys: sys, msg: msg });
 	this.test_if_notified(shift.pid, notifiedfor_unix, sys, function (test_good) {
 		if (!test_good) {
 			if (shift.smsphone != null) {
@@ -209,7 +223,7 @@ notifyer.sms_send_shift_conditional = function (shift, notifiedfor_unix, sys, ms
 
 notifyer.consider_notifying_for_shift = function (shift) {
 	var self = this;
-
+	this.log({ f: 'consider_notifying_for_shift', shift: shift });
 	var local_start = moment.tz(shift.start, 'America/Chicago');
 
 	var delta_until = (shift.start.getTime() - this.cur_date().getTime()) / 1000 / 60 / 60;
@@ -252,6 +266,7 @@ notifyer.consider_notifying_for_shift = function (shift) {
 
 notifyer.fetch_sms_recv = function (start, phonenum, cb) {
 	var trans = this.db.transaction();
+	this.log({ f: 'fetch_sms_recv', start: start, phonenum: phonenum, cb: cb });
 	trans.add(
 		'SELECT recvon, message FROM sms_recv WHERE recvon > FROM_UNIXTIME(?) AND fromphone = ? ORDER BY id',
 		[start.getTime() / 1000, phonenum],
@@ -310,7 +325,6 @@ notifyer.consider_admin_shift_problem_alert = function (shift, problem) {
 
 	self.test_if_notified(shift.pid, shift.start.getTime() / 1000, sys, function (test_good) {
 		if (!test_good) {
-			console.log('doing');
 			self.set_as_notified(shift.pid, shift.start.getTime() / 1000, sys);
 			self.sms_admin(problem);
 		}
@@ -319,6 +333,8 @@ notifyer.consider_admin_shift_problem_alert = function (shift, problem) {
 
 notifyer.consider_admin_response_alert = function (shift) {
 	var self = this;
+
+	this.log({ f: 'consider_admin_response_alert', shift: shift });
 
 	// None of this applies to John Estes
 	if (shift.pid == 5) {
@@ -332,7 +348,6 @@ notifyer.consider_admin_response_alert = function (shift) {
 		}
 		self.fetch_sms_recv(notifiedon, shift.smsphone, function (msgs) {
 			if (msgs.length == 0) {
-				console.log('msgs.length == 0', shift.name);
 				// Only do this if we can say with high reliability that
 				// we have appeared to have successfully sent a SMS message
 				// to this personnel.
@@ -381,7 +396,7 @@ notifyer.consider_admin_response_alert = function (shift) {
 						if (alert_level[0] == 4) {
 							self.last_called(shift.pid, function (reportedon, status) {
 								reportedon = new Date(reportedon);
-								if (status != 'in-progress' && reportedon > shift.start) {
+								if (status != 'in-progress' && reportedon < shift.start) {
 									var pname = shift.pdata ? shift.pdata.fullname : shift.name;
 									self.makecall_admin(
 										//'The eclectic schedule system shows that a shift that is to start in the hour has not been confirmed for ' + (shift.pdata ? shift.pdata.fullname : shift.name) + ' on ' + local_start_disp + '.');
@@ -392,7 +407,7 @@ notifyer.consider_admin_response_alert = function (shift) {
 						}
 
 						if (alert_level[0] == 3) {
-							self.makecall(shift.smsphone, (shift.pdata ? shift.pdata.fullname : shift.name) + ' you have not responded using a text message.', shift.pid);
+							self.makecall(shift.smsphone, (shift.pdata ? shift.pdata.fullname : shift.name) + ' you have not responded using a text message.', function () {}, shift.pid);
 						}
 
 						if (shift.problem) {
@@ -428,6 +443,8 @@ notifyer.consider_admin_response_alert = function (shift) {
 notifyer.check_sched = function () {
 	var self = this;
 
+	this.log({ f: 'check_sched' });
+
     var sd = this.cur_date();
     sd = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() - 1);
     var ed = this.cur_date();
@@ -444,7 +461,6 @@ notifyer.check_sched = function () {
 				var shift = sched[x];
 
 				if (shift.name.indexOf('?') > -1) {
-					console.log('ignored shift ', shift.start);
 					continue;
 				}
 
@@ -502,8 +518,6 @@ notifyer.check_sched = function () {
                 
                 self.consider_admin_response_alert(shift);
 			}
-
-			console.log('processed ' + sched.length + ' schedule entries');
 		});
 	});
 };
@@ -534,6 +548,7 @@ notifyer.get_pdata = function (cb) {
 
 notifyer.assign_pid_to_shift = function (pdata, shift) {
 	var result = core.getPersonnelIDFromName(pdata, shift.name, shift.start);
+	this.log({ f: 'assign_pid_to_shift', pdata: pdata, shift: shift, result: result });	
 	if (result[0] == 1) {
 		shift.pid = result[1];
 		shift.smsphone = pdata[result[1]].smsphone;
@@ -568,7 +583,7 @@ notifyer.check_new = function () {
 notifyer.http_request = function (req, res, params, url) {
 	var self = this;
 
-	console.log('url', url, params);
+	this.log({ f: 'http_request', params: params, url: url });
 
 	// url: 	  this.cur_baseurl + 'calldata?id=' + calldataid
 	if (url == '/calldata') {
@@ -582,6 +597,7 @@ notifyer.http_request = function (req, res, params, url) {
 
 			var pid = params.pid;
 			if (pid != undefined) {
+				this.log({ f: 'http_request', f_sub: 'had_pid', pid: params.pid});
 				pid = parseInt(pid);
 				var t = self.db.transaction();
 				t.add('INSERT INTO notifylog_answered (pid, reportedon, status) VALUES (?, NOW(), ?)',
@@ -600,8 +616,6 @@ notifyer.http_request = function (req, res, params, url) {
 	var from = params.From;
 	var body = params.Body || '';
 	var to = params.To;
-
-	console.log(params);
 
 	res.writeHead(200, {'Content-Type': 'text/plain'});
 
@@ -675,7 +689,6 @@ notifyer.start = function (cfg) {
 
 	dbjuggle.opendatabase(cfg.db, function (err, db) {
 		self.db = db;
-		console.log('database opened');
 		db.acquire();
 
 		// DEBUG
@@ -684,13 +697,17 @@ notifyer.start = function (cfg) {
     		console.log('result', result);
     	});
 		return;
+		
+
+		read temp adc
+		calculate target voltage to battery bank
+		adjust pwm to acquire target voltage to battery bank
 		*/
 
 		setInterval(function () {
 			self.check_new();
 			self.check_sched();
-		}, 1000 * 3);
-		console.log('notifyer interval started');
+		}, 1000 * 120);
 	});
 
 
